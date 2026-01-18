@@ -11,11 +11,15 @@
     "deploy": "npm run build && wrangler pages deploy dist"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^0.0.26",
+    "ai": "^3.1.1",
     "encoding-japanese": "^2.2.0",
     "iconv-lite": "^0.7.2",
     "text-encoding": "^0.7.0",
+    "unpdf": "^1.4.0",
     "vue": "^3.4.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",

@@ -230,60 +230,76 @@ const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, p
 
 // 解析信用卡账单 (通过 DeepSeek AI)
 const parseCreditBill = async (file: File): Promise<RecordData[]> => {
-  const formData = new FormData()
-  formData.append('file', file)
-
   try {
-    // 调用 Cloudflare Function API
-    const response = await fetch('/api/bill/parse-pdf', {
+    console.log('正在解析PDF文件...', file.name)
+    const { parsePdfText } = await import('../utils/pdf')
+    const text = await parsePdfText(file)
+    
+    console.log('---------------- PDF Content Start ----------------')
+    console.log(text)
+    console.log('---------------- PDF Content End ----------------')
+    
+    // 调用智能解析 API
+    const response = await fetch('/api/bill/analyze', {
       method: 'POST',
-      body: formData
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text })
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      throw new Error(`解析服务失败 (${response.status}): ${errorText}`)
+      throw new Error(`AI解析服务失败 (${response.status}): ${errorText}`)
     }
 
     const result = await response.json()
     
     if (!result.success) {
-      throw new Error(result.error || 'AI解析失败')
+      throw new Error(result.error || 'AI解析返回错误')
     }
 
     const records: RecordData[] = []
     
-    // 映射数据
-    // AI返回: { transactions: [{ 交易日期, 交易说明, 金额, 收支 }] }
-    for (const item of result.data.transactions) {
-      // 忽略还款
-      if (item['收支'] === '还款') continue
-      
-      const type = item['收支'] === '收入' ? '收入' : '支出'
-      const amount = Math.abs(item['金额'])
-      const date = item['交易日期']
-      const remark = item['交易说明']
-      
-      // 使用智能分类映射函数
-      const category = smartCategoryMapping(type, '', remark)
+    // 映射 AI 返回的数据
+    // 接口返回: { transactions: [{ type, amount, date, remark, category }] }
+    if (result.data && Array.isArray(result.data.transactions)) {
+      for (const item of result.data.transactions) {
+        
+        // 再次确认类型
+        const type = item.type === '收入' ? '收入' : '支出'
+        const amount = Number(item.amount)
+        const date = item.date
+        const remark = item.remark || ''
+        
+        // 优先使用 AI 建议的分类，如果 AI 没返回或标为其他，再尝试本地映射（可选）
+        // 这里我们优先信任 AI 的分类，如果 AI 没给，再 fallback
+        let category = item.category
+        if (!category || category === '其他') {
+           category = smartCategoryMapping(type, '', remark)
+        }
 
-      records.push({
-        type,
-        category,
-        amount,
-        date,
-        remark
-      })
+        records.push({
+          type,
+          category,
+          amount,
+          date,
+          remark
+        })
+      }
     }
 
     if (records.length === 0) {
-      throw new Error('未能从PDF中提取到有效交易记录,请检查文件格式')
+      throw new Error('未能从文本中提取到有效交易记录')
     }
 
     return records
 
   } catch (error: any) {
     console.error('信用卡PDF解析错误:', error)
+    if (error.message.includes('解析成功')) {
+      throw error
+    }
     throw new Error(error.message || 'PDF解析失败,请确认文件格式正确')
   }
 }
