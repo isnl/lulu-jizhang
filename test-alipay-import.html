@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>支付宝账单解析测试</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .upload-area {
+            border: 2px dashed #4CAF50;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover {
+            background: #f0f8f0;
+        }
+        .result {
+            margin-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .stats {
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 支付宝账单解析测试</h1>
+        
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p>📁 点击选择支付宝账单CSV文件</p>
+            <p style="font-size: 12px; color: #666;">支持GBK编码的CSV文件</p>
+        </div>
+        
+        <input type="file" id="fileInput" accept=".csv" style="display: none;">
+        
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        document.getElementById('fileInput').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>⏳ 正在解析...</p>';
+            
+            try {
+                const data = await file.arrayBuffer();
+                
+                // 使用codepage 936 (GBK) 读取
+                const workbook = XLSX.read(data, { type: 'array', codepage: 936 });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+                
+                console.log('总行数:', rows.length);
+                console.log('前5行:', rows.slice(0, 5));
+                
+                // 解析支付宝账单
+                const records = parseAlipayBill(rows);
+                
+                // 统计
+                const stats = {
+                    total: records.length,
+                    income: records.filter(r => r.type === '收入').length,
+                    expense: records.filter(r => r.type === '支出').length,
+                    totalIncome: records.filter(r => r.type === '收入').reduce((sum, r) => sum + r.amount, 0),
+                    totalExpense: records.filter(r => r.type === '支出').reduce((sum, r) => sum + r.amount, 0)
+                };
+                
+                // 显示结果
+                let html = `
+                    <div class="stats">
+                        <h3 class="success">✅ 解析成功！</h3>
+                        <p>总记录数: ${stats.total}</p>
+                        <p>收入: ${stats.income} 条，总额: ¥${stats.totalIncome.toFixed(2)}</p>
+                        <p>支出: ${stats.expense} 条，总额: ¥${stats.totalExpense.toFixed(2)}</p>
+                    </div>
+                    
+                    <h3>前10条记录预览：</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>日期</th>
+                                <th>类型</th>
+                                <th>分类</th>
+                                <th>金额</th>
+                                <th>备注</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                records.slice(0, 10).forEach(record => {
+                    html += `
+                        <tr>
+                            <td>${record.date}</td>
+                            <td style="color: ${record.type === '收入' ? '#4CAF50' : '#f44336'}">${record.type}</td>
+                            <td>${record.category}</td>
+                            <td>¥${record.amount.toFixed(2)}</td>
+                            <td>${record.remark}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += '</tbody></table>';
+                resultDiv.innerHTML = html;
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">❌ 解析失败: ${error.message}</p>`;
+                console.error(error);
+            }
+        });
+        
+        function parseAlipayBill(rows) {
+            if (rows.length < 6) {
+                throw new Error('支付宝账单文件格式不正确');
+            }
+            
+            const headerRow = rows[4];
+            if (!headerRow || String(headerRow[0]).trim() !== '交易号') {
+                throw new Error('无法识别支付宝账单格式，未找到正确的表头');
+            }
+            
+            const records = [];
+            
+            for (let i = 5; i < rows.length; i++) {
+                const row = rows[i];
+                if (!row || row.length < 11) continue;
+                
+                const paymentTimeRaw = row[3];
+                const counterparty = String(row[7] || '').trim();
+                const product = String(row[8] || '').trim();
+                const amountStr = String(row[9] || '').trim();
+                const direction = String(row[10] || '').trim();
+                const status = String(row[11] || '').trim();
+                const remark = String(row[14] || '').trim();
+                
+                if (status !== '交易成功') continue;
+                
+                let type;
+                if (direction === '支出') type = '支出';
+                else if (direction === '收入') type = '收入';
+                else continue;
+                
+                const amount = parseFloat(amountStr);
+                if (isNaN(amount) || amount === 0) continue;
+                
+                let dateObj;
+                if (typeof paymentTimeRaw === 'number') {
+                    dateObj = new Date((paymentTimeRaw - 25569) * 86400 * 1000);
+                } else {
+                    dateObj = new Date(paymentTimeRaw);
+                }
+                
+                if (isNaN(dateObj.getTime())) continue;
+                const formattedDate = dateObj.toISOString().split('T')[0];
+                
+                const category = smartCategoryMapping(type, counterparty, product);
+                const finalRemark = remark || `${counterparty} - ${product}`.substring(0, 50);
+                
+                records.push({
+                    type,
+                    category,
+                    amount,
+                    date: formattedDate,
+                    remark: finalRemark
+                });
+            }
+            
+            return records;
+        }
+        
+        function smartCategoryMapping(type, counterparty, product) {
+            let category = type === '支出' ? '日用品' : '其他';
+            
+            if (type === '支出') {
+                const categoryRules = [
+                    { keywords: ['素心微暖', '美妆', '护肤', '化妆品'], category: '美妆护肤' },
+                    { keywords: ['唯品会', '快乐的鞋子', '衣服', '服饰', '鞋'], category: '服饰' },
+                    { keywords: ['得到', '知识', '课程', '培训', '书店'], category: '学习' },
+                    { keywords: ['电影', '游戏', 'KTV', '酒吧'], category: '娱乐' },
+                    { keywords: ['喜乐', '崔小七', '饰品', '首饰', '珠宝'], category: '饰品' },
+                    { keywords: ['停车', '打车', '滴滴', '公交', '地铁', '加油', '出行', '中国铁路', '12306'], category: '交通' },
+                    { keywords: ['医院', '药店', '诊所', '体检', '挂号'], category: '医疗' },
+                    { keywords: ['美团', '饿了么', '外卖', '餐饮', '饭店', '食堂', '盒马', '麻辣', '拼多多平台商户'], category: '饮食' },
+                    { keywords: ['京东', '快团团', '超市', '便利店', '淘宝', '拼多多'], category: '日用品' },
+                    { keywords: ['话费', '流量', '宽带', '移动', '联通', '电信'], category: '通讯' },
+                    { keywords: ['宠物', '猫粮', '狗粮', '宠物医院'], category: '宠物' },
+                ];
+                
+                for (const rule of categoryRules) {
+                    if (rule.keywords.some(keyword => counterparty.includes(keyword) || product.includes(keyword))) {
+                        category = rule.category;
+                        break;
+                    }
+                }
+            } else {
+                const incomeRules = [
+                    { keywords: ['工资', '薪资', '薪酬', '公司'], category: '工资' },
+                    { keywords: ['投资', '理财', '股票', '基金', '分红'], category: '投资收入' },
+                    { keywords: ['稿费', '写作', '文章', '版税'], category: '稿费收入' },
+                    { keywords: ['红包', '现金奖励'], category: '其他' },
+                ];
+                
+                for (const rule of incomeRules) {
+                    if (rule.keywords.some(keyword => counterparty.includes(keyword) || product.includes(keyword))) {
+                        category = rule.category;
+                        break;
+                    }
+                }
+            }
+            
+            return category;
+        }
+    </script>
+</body>
+</html>

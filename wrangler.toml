@@ -1,0 +1,11 @@
+name = "accounting-app"
+compatibility_date = "2024-01-01"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "accounting-db"
+database_id = "f1e397c4-7d21-4749-9cf8-9328dbd3f7c3"
+
+# Pages configuration
+pages_build_output_dir = "dist"

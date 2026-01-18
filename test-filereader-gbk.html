@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileReader GBK支持测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+
+        .test-area {
+            border: 2px dashed #4CAF50;
+            padding: 30px;
+            text-align: center;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+
+        .success {
+            color: #4CAF50;
+        }
+
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>FileReader GBK编码支持测试</h1>
+
+    <div class="test-area">
+        <p>请选择支付宝账单CSV文件进行测试</p>
+        <input type="file" id="fileInput" accept=".csv">
+    </div>
+
+    <div id="result" class="result"></div>
+
+    <script>
+        document.getElementById('fileInput').addEventListener('change', async function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>正在测试...</p>';
+
+            const encodings = ['GBK', 'GB2312', 'GB18030', 'UTF-8'];
+            const results = [];
+
+            for (const encoding of encodings) {
+                try {
+                    const text = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = () => reject(new Error('读取失败'));
+                        reader.readAsText(file, encoding);
+                    });
+
+                    // 检查是否包含中文字符
+                    const hasChinese = /[\u4e00-\u9fa5]/.test(text);
+                    const hasGarbled = /�/.test(text);
+
+                    results.push({
+                        encoding,
+                        success: true,
+                        hasChinese,
+                        hasGarbled,
+                        preview: text.substring(0, 200)
+                    });
+                } catch (err) {
+                    results.push({
+                        encoding,
+                        success: false,
+                        error: err.message
+                    });
+                }
+            }
+
+            // 显示结果
+            let html = '<h3>测试结果：</h3>';
+            results.forEach(r => {
+                if (r.success) {
+                    const status = r.hasGarbled ? '❌ 有乱码' : (r.hasChinese ? '✅ 正常' : '⚠️ 无中文');
+                    html += `
+                        <div style="margin: 10px 0; padding: 10px; background: white; border-radius: 5px;">
+                            <strong>${r.encoding}</strong>: ${status}<br>
+                            <small style="color: #666;">预览: ${r.preview.substring(0, 100)}...</small>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="margin: 10px 0; padding: 10px; background: #ffebee; border-radius: 5px;">
+                            <strong>${r.encoding}</strong>: ❌ 不支持 (${r.error})
+                        </div>
+                    `;
+                }
+            });
+
+            resultDiv.innerHTML = html;
+        });
+    </script>
+</body>
+
+</html>

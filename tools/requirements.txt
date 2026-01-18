@@ -1,0 +1,9 @@
+# PDF处理库
+pdfplumber>=0.10.0
+
+# Excel处理库
+openpyxl>=3.1.0
+
+# 可选:更强大的PDF处理
+# PyPDF2>=3.0.0
+# pdfminer.six>=20221105
