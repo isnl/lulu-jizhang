@@ -228,32 +228,33 @@ const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, p
   return category
 }
 
-// 解析信用卡账单 (通过 Python 微服务)
+// 解析信用卡账单 (通过 DeepSeek AI)
 const parseCreditBill = async (file: File): Promise<RecordData[]> => {
   const formData = new FormData()
   formData.append('file', file)
 
   try {
-    // 调用 Node.js 代理接口 (由 Node 转发给 Python)
+    // 调用 Cloudflare Function API
     const response = await fetch('/api/bill/parse-pdf', {
       method: 'POST',
       body: formData
     })
 
     if (!response.ok) {
-      throw new Error(`解析服务连接失败: ${response.status}`)
+      const errorText = await response.text()
+      throw new Error(`解析服务失败 (${response.status}): ${errorText}`)
     }
 
     const result = await response.json()
     
     if (!result.success) {
-      throw new Error(result.error || '解析失败')
+      throw new Error(result.error || 'AI解析失败')
     }
 
     const records: RecordData[] = []
     
     // 映射数据
-    // Python服务返回: { transactions: [{ 交易日期, 交易说明, 金额, 收支, ... }] }
+    // AI返回: { transactions: [{ 交易日期, 交易说明, 金额, 收支 }] }
     for (const item of result.data.transactions) {
       // 忽略还款
       if (item['收支'] === '还款') continue
@@ -263,16 +264,8 @@ const parseCreditBill = async (file: File): Promise<RecordData[]> => {
       const date = item['交易日期']
       const remark = item['交易说明']
       
-      // 智能分类
-      let category = '其他'
-      if (type === '支出') {
-        category = '日用' // 默认信用卡消费为日用
-        // 简单匹配
-        if (remark.includes('餐饮') || remark.includes('食')) category = '饮食'
-        else if (remark.includes('交通') || remark.includes('铁')) category = '交通'
-      } else {
-        category = '副业' // 默认退款为副业/其他
-      }
+      // 使用智能分类映射函数
+      const category = smartCategoryMapping(type, '', remark)
 
       records.push({
         type,
@@ -283,11 +276,15 @@ const parseCreditBill = async (file: File): Promise<RecordData[]> => {
       })
     }
 
+    if (records.length === 0) {
+      throw new Error('未能从PDF中提取到有效交易记录,请检查文件格式')
+    }
+
     return records
 
-  } catch (error) {
-    console.error('信用卡解析错误:', error)
-    throw new Error('无法连接到解析服务，请确认 tools/start-api-server.bat 已运行')
+  } catch (error: any) {
+    console.error('信用卡PDF解析错误:', error)
+    throw new Error(error.message || 'PDF解析失败,请确认文件格式正确')
   }
 }
 
