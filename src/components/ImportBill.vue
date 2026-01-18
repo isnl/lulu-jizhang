@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Upload, FileText, CreditCard, Smartphone, Loader2 } from 'lucide-vue-next'
 import * as XLSX from 'xlsx'
 import { convertGBKtoUTF8 } from '../utils/gbk-converter'
 import type { RecordData } from '../types'
+import Modal from './ui/Modal.vue'
+import CustomSelect from './ui/CustomSelect.vue'
 
 const props = defineProps<{
   onImportSuccess?: () => void
@@ -32,7 +35,7 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
   // Find header row (starts with "交易时间")
   const headerRowIndex = rows.findIndex(row => row[0] === '交易时间')
   if (headerRowIndex === -1) {
-    throw new Error('无法识别微信账单格式，未找到"交易时间"列')
+    throw new Error('无法识别微信账单格式,未找到"交易时间"列')
   }
 
   const records: RecordData[] = []
@@ -87,30 +90,30 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
 
 // 解析支付宝账单
 const parseAlipayBill = (rows: any[][]): RecordData[] => {
-  // 支付宝CSV格式：前4行是元数据，第5行是表头
-  // 表头：交易号,商家订单号,交易创建时间,付款时间,最近修改时间,交易来源地,类型,交易对方,商品名称,金额（元）,收/支,交易状态,服务费（元）,成功退款（元）,备注,资金状态
+  // 支付宝CSV格式:前4行是元数据,第5行是表头
+  // 表头:交易号,商家订单号,交易创建时间,付款时间,最近修改时间,交易来源地,类型,交易对方,商品名称,金额(元),收/支,交易状态,服务费(元),成功退款(元),备注,资金状态
   
   if (rows.length < 6) {
     throw new Error('支付宝账单文件格式不正确')
   }
 
-  // 第5行（索引4）是表头
+  // 第5行(索引4)是表头
   const headerRow = rows[4]
   if (!headerRow || String(headerRow[0]).trim() !== '交易号') {
-    throw new Error('无法识别支付宝账单格式，未找到正确的表头')
+    throw new Error('无法识别支付宝账单格式,未找到正确的表头')
   }
 
   const records: RecordData[] = []
   
-  // 从第6行（索引5）开始是数据
+  // 从第6行(索引5)开始是数据
   for (let i = 5; i < rows.length; i++) {
       const row = rows[i]
       if (!row || row.length < 11) continue // Skip empty rows
 
-      const paymentTimeRaw = row[3] // 付款时间（保留原始类型）
+      const paymentTimeRaw = row[3] // 付款时间(保留原始类型)
       const counterparty = String(row[7] || '').trim() // 交易对方
       const product = String(row[8] || '').trim() // 商品名称
-      const amountStr = String(row[9] || '').trim() // 金额（元）
+      const amountStr = String(row[9] || '').trim() // 金额(元)
       const direction = String(row[10] || '').trim() // 收/支
       const status = String(row[11] || '').trim() // 交易状态
       const remark = String(row[14] || '').trim() // 备注
@@ -129,11 +132,11 @@ const parseAlipayBill = (rows: any[][]): RecordData[] => {
       if (isNaN(amount) || amount === 0) continue
 
       // Parse Date
-      // XLSX可能将日期转换为Excel序列号，需要特殊处理
+      // XLSX可能将日期转换为Excel序列号,需要特殊处理
       let dateObj: Date
       if (typeof paymentTimeRaw === 'number') {
         // Excel日期序列号转换为JavaScript Date
-        // Excel起始日期是1900-01-01，但实际是1899-12-30（Excel的bug）
+        // Excel起始日期是1900-01-01,但实际是1899-12-30(Excel的bug)
         dateObj = new Date((paymentTimeRaw - 25569) * 86400 * 1000)
       } else {
         dateObj = new Date(paymentTimeRaw)
@@ -160,12 +163,12 @@ const parseAlipayBill = (rows: any[][]): RecordData[] => {
   return records
 }
 
-// 智能分类映射（微信和支付宝共用）
+// 智能分类映射(微信和支付宝共用)
 const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string): string => {
   let category = type === '支出' ? '日用品' : '其他' // Default
   
   if (type === '支出') {
-    // 支出分类映射规则（优先级从高到低）
+    // 支出分类映射规则(优先级从高到低)
     const categoryRules = [
       // 美妆护肤
       { keywords: ['素心微暖', '美妆', '护肤', '化妆品'], category: '美妆护肤' },
@@ -272,8 +275,8 @@ const parseCreditBill = async (file: File): Promise<RecordData[]> => {
         const date = item.date
         const remark = item.remark || ''
         
-        // 优先使用 AI 建议的分类，如果 AI 没返回或标为其他，再尝试本地映射（可选）
-        // 这里我们优先信任 AI 的分类，如果 AI 没给，再 fallback
+        // 优先使用 AI 建议的分类,如果 AI 没返回或标为其他,再尝试本地映射(可选)
+        // 这里我们优先信任 AI 的分类,如果 AI 没给,再 fallback
         let category = item.category
         if (!category || category === '其他') {
            category = smartCategoryMapping(type, '', remark)
@@ -321,7 +324,7 @@ const handleFileChange = async (event: Event) => {
         let workbook: any
         
         if (billType.value === 'alipay') {
-          // 支付宝账单使用GBK编码，使用FileReader API读取
+          // 支付宝账单使用GBK编码,使用FileReader API读取
           try {
             const text = await convertGBKtoUTF8(file)
             // 将解码后的文本传给XLSX
@@ -392,155 +395,196 @@ const confirmImport = async () => {
 </script>
 
 <template>
-  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-        <span class="text-2xl">📥</span> 账单导入
-      </h2>
-      <button 
-        @click="triggerFileInput" 
-        class="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-1"
-        :disabled="isProcessing"
-      >
-        <span v-if="isProcessing" class="animate-spin">⌛</span>
-        <span v-else>📂</span>
-        选择{{ billType === 'wechat' ? '微信' : (billType === 'alipay' ? '支付宝' : '信用卡') }}账单
-      </button>
-      <input 
-        ref="fileInput" 
-        type="file" 
-        :accept="billType === 'credit' ? '.pdf' : '.xlsx,.xls,.csv'" 
-        class="hidden" 
-        @change="handleFileChange"
-      >
-    </div>
+  <div class="w-full">
 
     <!-- 账单类型选择 -->
-    <div class="mb-4">
-      <div class="flex items-center gap-3">
-        <label class="text-sm font-medium text-gray-600">账单类型：</label>
-        <div class="flex gap-2">
-          <button
-            @click="billType = 'wechat'"
+    <div class="mb-6">
+      <label class="block text-sm font-semibold text-gray-700 mb-3">选择账单类型</label>
+      <div class="grid grid-cols-3 gap-3">
+        <button
+          @click="billType = 'wechat'"
+          :class="[
+            'p-4 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-2',
+            billType === 'wechat'
+              ? 'b-emerald-500 bg-emerald-50 shadow-md'
+              : 'b-gray-200 bg-white hover:b-emerald-300 hover:bg-emerald-50/50'
+          ]"
+        >
+          <Smartphone 
+            :size="28" 
+            :class="billType === 'wechat' ? 'text-emerald-600' : 'text-gray-400'"
+          />
+          <span 
             :class="[
-              'px-4 py-2 rounded-lg text-sm font-medium transition-all',
-              billType === 'wechat'
-                ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-md'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              'text-sm font-semibold',
+              billType === 'wechat' ? 'text-emerald-700' : 'text-gray-600'
             ]"
           >
-            <span class="mr-1">💬</span> 微信支付
-          </button>
-          <button
-            @click="billType = 'alipay'"
+            微信支付
+          </span>
+        </button>
+
+        <button
+          @click="billType = 'alipay'"
+          :class="[
+            'p-4 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-2',
+            billType === 'alipay'
+              ? 'b-blue-500 bg-blue-50 shadow-md'
+              : 'b-gray-200 bg-white hover:b-blue-300 hover:bg-blue-50/50'
+          ]"
+        >
+          <FileText 
+            :size="28" 
+            :class="billType === 'alipay' ? 'text-blue-600' : 'text-gray-400'"
+          />
+          <span 
             :class="[
-              'px-4 py-2 rounded-lg text-sm font-medium transition-all',
-              billType === 'alipay'
-                ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              'text-sm font-semibold',
+              billType === 'alipay' ? 'text-blue-700' : 'text-gray-600'
             ]"
           >
-            <span class="mr-1">💰</span> 支付宝
-          </button>
-          <button
-            @click="billType = 'credit'"
+            支付宝
+          </span>
+        </button>
+
+        <button
+          @click="billType = 'credit'"
+          :class="[
+            'p-4 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-2',
+            billType === 'credit'
+              ? 'b-purple-500 bg-purple-50 shadow-md'
+              : 'b-gray-200 bg-white hover:b-purple-300 hover:bg-purple-50/50'
+          ]"
+        >
+          <CreditCard 
+            :size="28" 
+            :class="billType === 'credit' ? 'text-purple-600' : 'text-gray-400'"
+          />
+          <span 
             :class="[
-              'px-4 py-2 rounded-lg text-sm font-medium transition-all',
-              billType === 'credit'
-                ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-md'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              'text-sm font-semibold',
+              billType === 'credit' ? 'text-purple-700' : 'text-gray-600'
             ]"
           >
-            <span class="mr-1">💳</span> 信用卡(PDF)
-          </button>
-        </div>
+            信用卡PDF
+          </span>
+        </button>
       </div>
     </div>
 
-    <div class="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg p-4 border border-blue-100">
-      <p class="text-sm text-gray-700 mb-2 font-medium">📋 导入说明：</p>
-      <ul class="text-xs text-gray-600 space-y-1 ml-4">
-        <li v-if="billType === 'wechat'" class="flex items-start gap-1">
+    <!-- 上传按钮 -->
+    <button 
+      @click="triggerFileInput" 
+      class="w-full px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold rounded-lg hover:from-emerald-600 hover:to-teal-600 transition-all shadow-md hover:shadow-lg hover:translate-y-[-1px] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      :disabled="isProcessing"
+    >
+      <Loader2 v-if="isProcessing" :size="20" class="animate-spin" />
+      <Upload v-else :size="20" />
+      <span>{{ isProcessing ? '处理中...' : `选择${billType === 'wechat' ? '微信' : (billType === 'alipay' ? '支付宝' : '信用卡')}账单` }}</span>
+    </button>
+    <input 
+      ref="fileInput" 
+      type="file" 
+      :accept="billType === 'credit' ? '.pdf' : '.xlsx,.xls,.csv'" 
+      class="hidden" 
+      @change="handleFileChange"
+    >
+
+    <!-- 导入说明 -->
+    <div class="mt-6 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl p-4 b-solid b-1px b-blue-100">
+      <p class="text-sm text-gray-700 mb-2 font-semibold flex items-center gap-2">
+        <FileText :size="16" class="text-blue-600" />
+        导入说明
+      </p>
+      <ul class="text-xs text-gray-600 space-y-1.5 ml-6">
+        <li v-if="billType === 'wechat'" class="flex items-start gap-2">
           <span class="text-green-500 mt-0.5">•</span>
-          <span>支持微信支付账单导出文件（Excel 格式：.xlsx, .xls, .csv）</span>
+          <span>支持微信支付账单导出文件(Excel 格式: .xlsx, .xls, .csv)</span>
         </li>
-        <li v-if="billType === 'alipay'" class="flex items-start gap-1">
+        <li v-if="billType === 'alipay'" class="flex items-start gap-2">
           <span class="text-blue-500 mt-0.5">•</span>
-          <span>支持支付宝账单导出文件（CSV 格式，需使用 GBK 编码）</span>
+          <span>支持支付宝账单导出文件(CSV 格式,需使用 GBK 编码)</span>
         </li>
-        <li v-if="billType === 'credit'" class="flex items-start gap-1">
+        <li v-if="billType === 'credit'" class="flex items-start gap-2">
           <span class="text-purple-500 mt-0.5">•</span>
-          <span>支持招商银行等信用卡PDF账单，自动识别消费、退款</span>
+          <span>支持招商银行等信用卡PDF账单,自动识别消费、退款</span>
         </li>
-        <li class="flex items-start gap-1">
-          <span :class="billType === 'wechat' ? 'text-green-500' : 'text-blue-500'" class="mt-0.5">•</span>
+        <li class="flex items-start gap-2">
+          <span class="text-emerald-500 mt-0.5">•</span>
           <span>系统会自动识别交易类型并智能匹配分类</span>
         </li>
-        <li class="flex items-start gap-1">
-          <span :class="billType === 'wechat' ? 'text-green-500' : 'text-blue-500'" class="mt-0.5">•</span>
-          <span>导入前可预览并调整分类，确保数据准确</span>
+        <li class="flex items-start gap-2">
+          <span class="text-emerald-500 mt-0.5">•</span>
+          <span>导入前可预览并调整分类,确保数据准确</span>
         </li>
       </ul>
     </div>
 
+    <!-- Preview Modal -->
+    <Modal :show="showPreview" title="导入预览" size="lg" @close="showPreview = false">
+      <div class="mb-4 px-4 py-3 bg-emerald-50 rounded-lg b-solid b-1px b-emerald-200">
+        <p class="text-sm font-semibold text-emerald-800">
+          共找到 {{ previewRecords.length }} 条有效记录
+        </p>
+      </div>
 
-    <!-- Preview Modal/Area -->
-    <div v-if="showPreview" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl">
-          <h3 class="text-lg font-bold text-gray-800">导入预览 ({{ previewRecords.length }} 条记录)</h3>
-          <button @click="showPreview = false" class="text-gray-400 hover:text-gray-600 font-bold text-xl">✕</button>
-        </div>
-        
-        <div class="flex-1 overflow-auto p-6">
-          <table class="w-full text-sm text-left">
-            <thead class="bg-gray-50 sticky top-0">
-              <tr>
-                <th class="p-3 font-semibold text-gray-600">日期</th>
-                <th class="p-3 font-semibold text-gray-600">类型</th>
-                <th class="p-3 font-semibold text-gray-600">分类</th>
-                <th class="p-3 font-semibold text-gray-600">金额</th>
-                <th class="p-3 font-semibold text-gray-600">备注</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-              <tr v-for="(record, idx) in previewRecords" :key="idx" class="hover:bg-gray-50">
-                <td class="p-3">{{ record.date }}</td>
-                <td class="p-3">
-                  <span :class="record.type === '收入' ? 'text-red-500' : 'text-emerald-500'">
-                    {{ record.type }}
-                  </span>
-                </td>
-                <td class="p-3">
-                  <!-- Allow changing category in preview in future versions -->
-                   <select v-model="record.category" class="bg-transparent border-none focus:ring-0 text-gray-800 font-medium cursor-pointer">
-                      <option v-for="c in CATEGORIES" :key="c" :value="c">{{ c }}</option>
-                   </select>
-                </td>
-                <td class="p-3 font-mono">{{ record.amount.toFixed(2) }}</td>
-                <td class="p-3 text-gray-500 truncate max-w-xs" :title="record.remark">{{ record.remark }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr>
+              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
+              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
+              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
+              <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
+              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="(record, idx) in previewRecords" :key="idx" class="hover:bg-gray-50 transition-colors">
+              <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
+              <td class="px-4 py-3">
+                <span 
+                  :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                >
+                  {{ record.type }}
+                </span>
+              </td>
+              <td class="px-4 py-3">
+                <CustomSelect 
+                  v-model="record.category" 
+                  :options="CATEGORIES"
+                />
+              </td>
+              <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
+                {{ record.amount.toFixed(2) }}
+              </td>
+              <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
+                {{ record.remark }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-        <div class="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 rounded-b-2xl">
+      <template #footer>
+        <div class="flex justify-end gap-3">
           <button 
             @click="showPreview = false" 
-            class="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-white hover:border-gray-300 transition-all font-medium"
+            class="px-5 py-2.5 rounded-xl b-solid b-1px b-gray-300 text-gray-700 hover:bg-gray-50 transition-all font-medium"
           >
             取消
           </button>
           <button 
             @click="confirmImport" 
-            class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg shadow-emerald-200 hover:shadow-xl hover:translate-y-[-1px] transition-all flex items-center gap-2"
+            class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg shadow-emerald-200 hover:shadow-xl hover:translate-y-[-1px] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isProcessing"
           >
-            <span v-if="isProcessing" class="animate-spin">↻</span>
+            <Loader2 v-if="isProcessing" :size="18" class="animate-spin" />
             确认导入
           </button>
         </div>
-      </div>
-    </div>
+      </template>
+    </Modal>
   </div>
 </template>
+
