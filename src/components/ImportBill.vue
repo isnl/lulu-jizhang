@@ -23,11 +23,35 @@ const previewRecords = ref<RecordData[]>([])
 const showPreview = ref(false)
 const billType = ref<'wechat' | 'alipay' | 'credit'>('wechat') // 账单类型
 
+// 分类后的数据
+const validRecords = ref<RecordData[]>([]) // 需导入的数据
+const duplicateRecords = ref<RecordData[]>([]) // 重复数据
+
 // 导入分类常量
 import { CATEGORIES } from '../types'
 
 const triggerFileInput = () => {
   fileInput.value?.click()
+}
+
+// 判断是否为重复数据（支付宝/微信）
+const isDuplicateRecord = (record: RecordData): boolean => {
+  const remark = record.remark || ''
+  return remark.includes('支付宝-') || remark.includes('财付通-')
+}
+
+// 分类数据
+const classifyRecords = (records: RecordData[]) => {
+  validRecords.value = []
+  duplicateRecords.value = []
+
+  for (const record of records) {
+    if (isDuplicateRecord(record)) {
+      duplicateRecords.value.push(record)
+    } else {
+      validRecords.value.push(record)
+    }
+  }
 }
 
 // 解析微信账单
@@ -70,11 +94,11 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       if (isNaN(dateObj.getTime())) continue
       const formattedDate = dateObj.toISOString().split('T')[0]
 
-      // Smart Category Mapping
-      const category = smartCategoryMapping(type, counterparty, product)
-      
       // Construct Remark
       const remark = `${counterparty} - ${product}`.substring(0, 50) // Limit length
+
+      // Smart Category Mapping - 传入备注用于判断
+      const category = smartCategoryMapping(type, counterparty, product, remark)
 
       records.push({
           type,
@@ -145,11 +169,11 @@ const parseAlipayBill = (rows: any[][]): RecordData[] => {
       if (isNaN(dateObj.getTime())) continue
       const formattedDate = dateObj.toISOString().split('T')[0]
 
-      // Smart Category Mapping
-      const category = smartCategoryMapping(type, counterparty, product)
-      
       // Construct Remark
       const finalRemark = remark || `${counterparty} - ${product}`.substring(0, 50)
+
+      // Smart Category Mapping - 传入备注用于判断
+      const category = smartCategoryMapping(type, counterparty, product, finalRemark)
 
       records.push({
           type,
@@ -164,49 +188,52 @@ const parseAlipayBill = (rows: any[][]): RecordData[] => {
 }
 
 // 智能分类映射(微信和支付宝共用)
-const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string): string => {
+const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string, remark: string = ''): string => {
   let category = type === '支出' ? '日用品' : '其他' // Default
-  
+
   if (type === '支出') {
     // 支出分类映射规则(优先级从高到低)
     const categoryRules = [
+      // 生活费 - 根据备注判断
+      { keywords: ['生活费'], category: '生活费' },
+
+      // 宠物 - 根据备注判断
+      { keywords: ['驱虫', '猫粮', '狗粮', '宠物医院', '宠物'], category: '宠物' },
+
       // 美妆护肤
       { keywords: ['素心微暖', '美妆', '护肤', '化妆品'], category: '美妆护肤' },
-      
+
       // 服饰
       { keywords: ['唯品会', '快乐的鞋子', '衣服', '服饰', '鞋'], category: '服饰' },
-      
+
       // 学习
       { keywords: ['得到', '知识', '课程', '培训', '书店'], category: '学习' },
-      
+
       // 娱乐
       { keywords: ['电影', '游戏', 'KTV', '酒吧'], category: '娱乐' },
-      
+
       // 饰品
       { keywords: ['喜乐', '崔小七', '饰品', '首饰', '珠宝'], category: '饰品' },
-      
+
       // 交通
       { keywords: ['停车', '打车', '滴滴', '公交', '地铁', '加油', '出行', '中国铁路', '12306'], category: '交通' },
-      
+
       // 医疗
       { keywords: ['医院', '药店', '诊所', '体检', '挂号'], category: '医疗' },
-      
+
       // 饮食
       { keywords: ['美团', '饿了么', '外卖', '餐饮', '饭店', '食堂', '盒马', '麻辣', '拼多多平台商户'], category: '饮食' },
-      
+
       // 日用品
       { keywords: ['京东', '快团团', '超市', '便利店', '淘宝', '拼多多'], category: '日用品' },
-      
+
       // 通讯
       { keywords: ['话费', '流量', '宽带', '移动', '联通', '电信'], category: '通讯' },
-      
-      // 宠物
-      { keywords: ['宠物', '猫粮', '狗粮', '宠物医院'], category: '宠物' },
     ]
-    
-    // 匹配规则
+
+    // 匹配规则 - 优先匹配备注，其次匹配交易对方和商品
     for (const rule of categoryRules) {
-      if (rule.keywords.some(keyword => counterparty.includes(keyword) || product.includes(keyword))) {
+      if (rule.keywords.some(keyword => remark.includes(keyword) || counterparty.includes(keyword) || product.includes(keyword))) {
         category = rule.category
         break
       }
@@ -219,15 +246,15 @@ const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, p
       { keywords: ['稿费', '写作', '文章', '版税'], category: '稿费收入' },
       { keywords: ['红包', '现金奖励'], category: '其他' },
     ]
-    
+
     for (const rule of incomeRules) {
-      if (rule.keywords.some(keyword => counterparty.includes(keyword) || product.includes(keyword))) {
+      if (rule.keywords.some(keyword => remark.includes(keyword) || counterparty.includes(keyword) || product.includes(keyword))) {
         category = rule.category
         break
       }
     }
   }
-  
+
   return category
 }
 
@@ -353,6 +380,16 @@ const handleFileChange = async (event: Event) => {
     }
 
     previewRecords.value = records
+
+    // 如果是信用卡账单，进行数据分类
+    if (billType.value === 'credit') {
+      classifyRecords(records)
+    } else {
+      // 微信和支付宝账单不需要分类，全部作为有效数据
+      validRecords.value = records
+      duplicateRecords.value = []
+    }
+
     showPreview.value = true
 
   } catch (err: any) {
@@ -368,21 +405,26 @@ const handleFileChange = async (event: Event) => {
 const confirmImport = async () => {
     isProcessing.value = true
     try {
+        // 只导入有效数据（validRecords），不导入重复数据
+        const dataToImport = billType.value === 'credit' ? validRecords.value : previewRecords.value
+
         const response = await fetch('/api/records/batch', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(previewRecords.value)
+            body: JSON.stringify(dataToImport)
         })
 
         const result = await response.json()
-        
+
         if (response.ok) {
             emit('success', `成功导入 ${result.count} 条记录`)
             emit('records-added')
             showPreview.value = false
             previewRecords.value = []
+            validRecords.value = []
+            duplicateRecords.value = []
         } else {
             throw new Error(result.error || '导入失败')
         }
@@ -522,65 +564,168 @@ const confirmImport = async () => {
 
     <!-- Preview Modal -->
     <Modal :show="showPreview" title="导入预览" size="lg" @close="showPreview = false">
-      <div class="mb-4 px-4 py-3 bg-emerald-50 rounded-lg b-solid b-1px b-emerald-200">
-        <p class="text-sm font-semibold text-emerald-800">
-          共找到 {{ previewRecords.length }} 条有效记录
-        </p>
-      </div>
+      <!-- 信用卡账单：分类显示 -->
+      <template v-if="billType === 'credit'">
+        <!-- 统计信息 -->
+        <div class="mb-4 px-4 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg b-solid b-1px b-emerald-200">
+          <p class="text-sm font-semibold text-emerald-800">
+            共找到 {{ previewRecords.length }} 条记录，其中需导入 {{ validRecords.length }} 条，重复数据 {{ duplicateRecords.length }} 条
+          </p>
+        </div>
 
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50 sticky top-0">
-            <tr>
-              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
-              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
-              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
-              <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
-              <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-100">
-            <tr v-for="(record, idx) in previewRecords" :key="idx" class="hover:bg-gray-50 transition-colors">
-              <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
-              <td class="px-4 py-3">
-                <span 
-                  :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
-                >
-                  {{ record.type }}
-                </span>
-              </td>
-              <td class="px-4 py-3">
-                <CustomSelect 
-                  v-model="record.category" 
-                  :options="CATEGORIES"
-                />
-              </td>
-              <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
-                {{ record.amount.toFixed(2) }}
-              </td>
-              <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
-                {{ record.remark }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+        <!-- 1. 需导入的数据 -->
+        <div class="mb-6">
+          <div class="mb-3 px-4 py-2 bg-blue-50 rounded-lg b-solid b-1px b-blue-200">
+            <h3 class="text-sm font-bold text-blue-800">1. 需导入的数据 ({{ validRecords.length }} 条)</h3>
+          </div>
+          <div class="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 sticky top-0">
+                <tr>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
+                  <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr v-for="(record, idx) in validRecords" :key="'valid-' + idx" class="hover:bg-gray-50 transition-colors">
+                  <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
+                  <td class="px-4 py-3">
+                    <span
+                      :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                    >
+                      {{ record.type }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <CustomSelect
+                      v-model="record.category"
+                      :options="CATEGORIES"
+                    />
+                  </td>
+                  <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
+                    {{ record.amount.toFixed(2) }}
+                  </td>
+                  <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
+                    {{ record.remark }}
+                  </td>
+                </tr>
+                <tr v-if="validRecords.length === 0">
+                  <td colspan="5" class="px-4 py-6 text-center text-gray-400">暂无需导入的数据</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 2. 重复数据 -->
+        <div v-if="duplicateRecords.length > 0">
+          <div class="mb-3 px-4 py-2 bg-orange-50 rounded-lg b-solid b-1px b-orange-200">
+            <h3 class="text-sm font-bold text-orange-800">2. 与支付宝/微信重复数据 ({{ duplicateRecords.length }} 条)</h3>
+            <p class="text-xs text-orange-600 mt-1">以下数据不会被导入</p>
+          </div>
+          <div class="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 sticky top-0">
+                <tr>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
+                  <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr v-for="(record, idx) in duplicateRecords" :key="'dup-' + idx" class="hover:bg-gray-50 transition-colors opacity-60">
+                  <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
+                  <td class="px-4 py-3">
+                    <span
+                      :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                    >
+                      {{ record.type }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 text-gray-600">
+                    {{ record.category }}
+                  </td>
+                  <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
+                    {{ record.amount.toFixed(2) }}
+                  </td>
+                  <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
+                    {{ record.remark }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <!-- 微信/支付宝账单：原有显示方式 -->
+      <template v-else>
+        <div class="mb-4 px-4 py-3 bg-emerald-50 rounded-lg b-solid b-1px b-emerald-200">
+          <p class="text-sm font-semibold text-emerald-800">
+            共找到 {{ previewRecords.length }} 条有效记录
+          </p>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr>
+                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
+                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
+                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
+                <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
+                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr v-for="(record, idx) in previewRecords" :key="idx" class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
+                <td class="px-4 py-3">
+                  <span
+                    :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                  >
+                    {{ record.type }}
+                  </span>
+                </td>
+                <td class="px-4 py-3">
+                  <CustomSelect
+                    v-model="record.category"
+                    :options="CATEGORIES"
+                  />
+                </td>
+                <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
+                  {{ record.amount.toFixed(2) }}
+                </td>
+                <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
+                  {{ record.remark }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
 
       <template #footer>
         <div class="flex justify-end gap-3">
-          <button 
-            @click="showPreview = false" 
+          <button
+            @click="showPreview = false"
             class="px-5 py-2.5 rounded-xl b-solid b-1px b-gray-300 text-gray-700 hover:bg-gray-50 transition-all font-medium"
           >
             取消
           </button>
-          <button 
-            @click="confirmImport" 
+          <button
+            @click="confirmImport"
             class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg shadow-emerald-200 hover:shadow-xl hover:translate-y-[-1px] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isProcessing"
           >
             <Loader2 v-if="isProcessing" :size="18" class="animate-spin" />
-            确认导入
+            <span v-if="billType === 'credit'">确认导入 ({{ validRecords.length }} 条)</span>
+            <span v-else>确认导入</span>
           </button>
         </div>
       </template>
