@@ -1,18 +1,46 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Wallet, CheckCircle, XCircle, Info } from 'lucide-vue-next'
 import RecordForm from './components/RecordForm.vue'
 import ImportBill from './components/ImportBill.vue'
 import RecordFilter from './components/RecordFilter.vue'
 import RecordTable from './components/RecordTable.vue'
+import MemberManagement from './components/MemberManagement.vue'
 import Modal from './components/ui/Modal.vue'
-import type { RecordData } from './types'
+import type { RecordData, Member } from './types'
 
 const records = ref<RecordData[]>([])
+const members = ref<Member[]>([])
 const loading = ref(false)
 const message = ref({ text: '', type: '' })
 const showRecordModal = ref(false)
 const showImportModal = ref(false)
+const showMemberModal = ref(false)
+
+// 组件引用
+const recordFilterRef = ref<InstanceType<typeof RecordFilter> | null>(null)
+
+// 加载成员列表
+const loadMembers = async () => {
+  try {
+    const response = await fetch('/api/members')
+    const result = await response.json()
+    if (result.success) {
+      members.value = result.data
+    }
+  } catch (error) {
+    console.error('加载成员列表失败:', error)
+  }
+}
+
+// 成员变化时重新加载
+const handleMembersChanged = () => {
+  loadMembers()
+}
+
+onMounted(() => {
+  loadMembers()
+})
 
 const showMessage = (text: string, type: 'success' | 'error' | 'info') => {
   message.value = { text, type }
@@ -23,6 +51,8 @@ const showMessage = (text: string, type: 'success' | 'error' | 'info') => {
 
 const handleRecordAdded = () => {
   showMessage('记录添加成功', 'success')
+  // 刷新记录列表
+  recordFilterRef.value?.loadRecords()
 }
 
 const handleRecordsLoaded = (data: RecordData[]) => {
@@ -75,11 +105,14 @@ const handleError = (error: string) => {
     <div class="sticky top-[88px] z-30 bg-white/95 backdrop-blur-md shadow-md b-b-solid b-b-1px b-b-gray-200">
       <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <RecordFilter
+          ref="recordFilterRef"
+          :members="members"
           @records-loaded="handleRecordsLoaded"
           @error="handleError"
           @loading="loading = $event"
           @show-record-form="showRecordModal = true"
           @show-import-form="showImportModal = true"
+          @show-member-management="showMemberModal = true"
         />
       </div>
     </div>
@@ -115,8 +148,22 @@ const handleError = (error: string) => {
       size="lg" 
       @close="showImportModal = false"
     >
-      <ImportBill 
+      <ImportBill
+        :members="members"
         @records-added="() => { handleRecordAdded(); showImportModal = false }"
+        @error="handleError"
+        @success="(msg) => showMessage(msg, 'success')"
+      />
+    </Modal>
+
+    <Modal
+      :show="showMemberModal"
+      title="家庭成员管理"
+      size="lg"
+      @close="showMemberModal = false"
+    >
+      <MemberManagement
+        @members-changed="handleMembersChanged"
         @error="handleError"
         @success="(msg) => showMessage(msg, 'success')"
       />

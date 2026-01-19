@@ -1,3 +1,26 @@
+// 家庭成员接口
+export interface Member {
+    id?: number
+    name: string                    // 姓名（用于匹配支付宝/信用卡账单）
+    wechatNickname?: string        // 微信昵称（用于匹配微信账单）
+    color?: string                  // 标识颜色
+    isActive?: boolean              // 是否启用
+    createdAt?: string
+    updatedAt?: string
+}
+
+// 统计视图类型
+export type StatisticsView = 'family' | 'personal'
+
+// 成员统计数据
+export interface MemberStatistics {
+    memberId: number | null
+    memberName: string
+    totalExpense: number
+    totalIncome: number
+    recordCount: number
+}
+
 export interface RecordData {
     id?: number
     type: '支出' | '收入'
@@ -5,6 +28,8 @@ export interface RecordData {
     amount: number
     date: string
     remark?: string
+    memberId?: number | null        // 关联成员ID
+    memberName?: string             // 成员名称（用于显示）
     createdAt?: string
     updatedAt?: string
     日总计?: number

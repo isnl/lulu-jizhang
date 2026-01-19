@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Upload, FileText, CreditCard, Smartphone, Loader2 } from 'lucide-vue-next'
+import { ref, computed } from 'vue'
+import { Upload, FileText, CreditCard, Smartphone, Loader2, Users } from 'lucide-vue-next'
 import * as XLSX from 'xlsx'
 import { convertGBKtoUTF8 } from '../utils/gbk-converter'
-import type { RecordData } from '../types'
+import type { RecordData, Member } from '../types'
 import Modal from './ui/Modal.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 
 const props = defineProps<{
   onImportSuccess?: () => void
+  members?: Member[]  // 从父组件传入成员列表
 }>()
 
 const emit = defineEmits<{
@@ -23,12 +24,44 @@ const previewRecords = ref<RecordData[]>([])
 const showPreview = ref(false)
 const billType = ref<'wechat' | 'alipay' | 'credit'>('wechat') // 账单类型
 
+// 成员选择相关
+const selectedMemberId = ref<number | null>(null)
+const detectedMemberName = ref<string>('')  // 从账单中检测到的姓名/昵称
+const suggestedMemberId = ref<number | null>(null)  // 智能推荐的成员ID
+
 // 分类后的数据
 const validRecords = ref<RecordData[]>([]) // 需导入的数据
 const duplicateRecords = ref<RecordData[]>([]) // 重复数据
 
 // 导入分类常量
 import { CATEGORIES } from '../types'
+
+// 活跃成员列表
+const activeMembers = computed(() => {
+  return props.members?.filter(m => m.isActive) || []
+})
+
+// 根据检测到的姓名/昵称智能匹配成员
+const matchMember = (name: string, isWechat: boolean = false): number | null => {
+  if (!name || activeMembers.value.length === 0) return null
+
+  const normalizedName = name.trim().toLowerCase()
+
+  for (const member of activeMembers.value) {
+    if (isWechat) {
+      // 微信账单：匹配微信昵称
+      if (member.wechatNickname && member.wechatNickname.trim().toLowerCase() === normalizedName) {
+        return member.id || null
+      }
+    } else {
+      // 支付宝/信用卡账单：匹配姓名
+      if (member.name.trim().toLowerCase() === normalizedName) {
+        return member.id || null
+      }
+    }
+  }
+  return null
+}
 
 const triggerFileInput = () => {
   fileInput.value?.click()
@@ -113,12 +146,26 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
 }
 
 // 解析支付宝账单
-const parseAlipayBill = (rows: any[][]): RecordData[] => {
+const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: string } => {
   // 支付宝CSV格式:前4行是元数据,第5行是表头
+  // 第一行通常包含账户信息，如"姓名,xxx"
   // 表头:交易号,商家订单号,交易创建时间,付款时间,最近修改时间,交易来源地,类型,交易对方,商品名称,金额(元),收/支,交易状态,服务费(元),成功退款(元),备注,资金状态
-  
+
   if (rows.length < 6) {
     throw new Error('支付宝账单文件格式不正确')
+  }
+
+  // 尝试从元数据中提取账户姓名（通常在前几行）
+  let accountName = ''
+  for (let i = 0; i < 4; i++) {
+    const row = rows[i]
+    if (row && row.length >= 2) {
+      const firstCell = String(row[0] || '').trim()
+      if (firstCell === '姓名' || firstCell.includes('姓名')) {
+        accountName = String(row[1] || '').trim()
+        break
+      }
+    }
   }
 
   // 第5行(索引4)是表头
@@ -184,7 +231,7 @@ const parseAlipayBill = (rows: any[][]): RecordData[] => {
       })
   }
 
-  return records
+  return { records, accountName }
 }
 
 // 智能分类映射(微信和支付宝共用)
@@ -340,16 +387,22 @@ const handleFileChange = async (event: Event) => {
   if (!file) return
 
   isProcessing.value = true
+  // 重置成员选择状态
+  detectedMemberName.value = ''
+  suggestedMemberId.value = null
+  selectedMemberId.value = null
+
   try {
     let records: RecordData[] = []
-    
+
     if (billType.value === 'credit') {
         // 信用卡账单处理
         records = await parseCreditBill(file)
+        // 信用卡账单暂不支持自动检测姓名，需要手动选择
     } else {
         // 现有的 Excel/CSV 处理
         let workbook: any
-        
+
         if (billType.value === 'alipay') {
           // 支付宝账单使用GBK编码,使用FileReader API读取
           try {
@@ -364,14 +417,26 @@ const handleFileChange = async (event: Event) => {
           const data = await file.arrayBuffer()
           workbook = XLSX.read(data, { type: 'array' })
         }
-        
+
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
         const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][]
 
         if (billType.value === 'wechat') {
           records = parseWechatBill(rows)
+          // 微信账单暂不支持自动检测昵称
         } else {
-          records = parseAlipayBill(rows)
+          // 支付宝账单
+          const result = parseAlipayBill(rows)
+          records = result.records
+          // 尝试智能匹配成员
+          if (result.accountName) {
+            detectedMemberName.value = result.accountName
+            const matchedId = matchMember(result.accountName, false)
+            if (matchedId) {
+              suggestedMemberId.value = matchedId
+              selectedMemberId.value = matchedId
+            }
+          }
         }
     }
 
@@ -413,7 +478,10 @@ const confirmImport = async () => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(dataToImport)
+            body: JSON.stringify({
+                records: dataToImport,
+                memberId: selectedMemberId.value
+            })
         })
 
         const result = await response.json()
@@ -425,6 +493,10 @@ const confirmImport = async () => {
             previewRecords.value = []
             validRecords.value = []
             duplicateRecords.value = []
+            // 重置成员选择
+            selectedMemberId.value = null
+            detectedMemberName.value = ''
+            suggestedMemberId.value = null
         } else {
             throw new Error(result.error || '导入失败')
         }
@@ -564,6 +636,57 @@ const confirmImport = async () => {
 
     <!-- Preview Modal -->
     <Modal :show="showPreview" title="导入预览" size="lg" @close="showPreview = false">
+      <!-- 成员选择区域 -->
+      <div v-if="activeMembers.length > 0" class="mb-4 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg b-solid b-1px b-blue-200">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Users :size="18" class="text-blue-600" />
+            <span class="text-sm font-semibold text-blue-800">选择家庭成员</span>
+            <span v-if="detectedMemberName" class="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+              检测到: {{ detectedMemberName }}
+            </span>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button
+            @click="selectedMemberId = null"
+            :class="[
+              'px-3 py-1.5 rounded-lg text-sm font-medium transition-all b-solid b-2px',
+              selectedMemberId === null
+                ? 'bg-gray-700 text-white b-gray-700'
+                : 'bg-white text-gray-600 b-gray-300 hover:b-gray-400'
+            ]"
+          >
+            家庭共同
+          </button>
+          <button
+            v-for="member in activeMembers"
+            :key="member.id"
+            @click="selectedMemberId = member.id || null"
+            :class="[
+              'px-3 py-1.5 rounded-lg text-sm font-medium transition-all b-solid b-2px flex items-center gap-1.5',
+              selectedMemberId === member.id
+                ? 'text-white'
+                : 'bg-white hover:opacity-80'
+            ]"
+            :style="{
+              backgroundColor: selectedMemberId === member.id ? member.color : 'white',
+              borderColor: member.color,
+              color: selectedMemberId === member.id ? 'white' : member.color
+            }"
+          >
+            <span
+              class="w-5 h-5 rounded-full flex items-center justify-center text-xs text-white"
+              :style="{ backgroundColor: member.color }"
+            >
+              {{ member.name.charAt(0) }}
+            </span>
+            {{ member.name }}
+            <span v-if="suggestedMemberId === member.id" class="text-xs opacity-75">(推荐)</span>
+          </button>
+        </div>
+      </div>
+
       <!-- 信用卡账单：分类显示 -->
       <template v-if="billType === 'credit'">
         <!-- 统计信息 -->

@@ -12,6 +12,12 @@ interface RecordData {
     amount: number;
     date: string;
     remark?: string;
+    memberId?: number | null;  // 关联成员ID
+}
+
+interface BatchImportRequest {
+    records: RecordData[];
+    memberId?: number | null;  // 批量分配给所有记录的成员ID
 }
 
 const RECORD_TYPES = ['支出', '收入'];
@@ -54,9 +60,27 @@ export const onRequestOptions: PagesFunction<Env> = async () => {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
     try {
         const { DB } = context.env;
-        const records = await context.request.json() as RecordData[];
+        const body = await context.request.json();
 
-        if (!Array.isArray(records) || records.length === 0) {
+        // 支持两种格式：直接数组或 { records, memberId } 对象
+        let records: RecordData[];
+        let batchMemberId: number | null = null;
+
+        if (Array.isArray(body)) {
+            records = body;
+        } else if (body && Array.isArray(body.records)) {
+            records = body.records;
+            batchMemberId = body.memberId ?? null;
+        } else {
+            return new Response(JSON.stringify({
+                error: '请提供有效的记录数组'
+            }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        if (records.length === 0) {
             return new Response(JSON.stringify({
                 error: '请提供有效的记录数组'
             }), {
@@ -117,11 +141,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             }
         }
 
-        // Prepare statements
+        // Prepare statements with member_id support
         const statements = records.map(record => {
+            // 优先使用记录自身的memberId，否则使用批量分配的memberId
+            const memberId = record.memberId !== undefined ? record.memberId : batchMemberId;
             return DB.prepare(
-                'INSERT INTO records (type, category, amount, date, remark) VALUES (?, ?, ?, ?, ?)'
-            ).bind(record.type, record.category, record.amount, record.date, record.remark || '');
+                'INSERT INTO records (type, category, amount, date, remark, member_id) VALUES (?, ?, ?, ?, ?, ?)'
+            ).bind(record.type, record.category, record.amount, record.date, record.remark || '', memberId);
         });
 
         // Execute batch
