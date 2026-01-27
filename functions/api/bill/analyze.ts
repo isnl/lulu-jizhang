@@ -1,13 +1,26 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
 import { z } from 'zod';
+import { authenticate, corsHeaders, unauthorizedResponse } from '../../utils/middleware';
 
 interface Env {
+    DB: D1Database;
     DEEPSEEK_API_KEY: string;
+    JWT_SECRET: string;
 }
+
+export const onRequestOptions: PagesFunction<Env> = async () => {
+    return new Response(null, { headers: corsHeaders });
+};
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
     try {
+        // 认证检查
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { request, env } = context;
         const body = await request.json() as { text: string };
 
@@ -177,14 +190,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             success: true,
             data: { transactions: mappedTransactions }
         }), {
-            headers: { 'Content-Type': 'application/json' }
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
 
     } catch (err: any) {
         console.error('API Error:', err);
         return new Response(JSON.stringify({ success: false, error: err.message }), {
             status: 500,
-            headers: { 'Content-Type': 'application/json' }
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
     }
 };

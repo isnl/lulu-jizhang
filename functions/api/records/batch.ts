@@ -1,9 +1,11 @@
-
 // Cloudflare Functions API for batch record creation
 // Path: /api/records/batch
 
+import { authenticate, corsHeaders, unauthorizedResponse } from '../../utils/middleware';
+
 interface Env {
     DB: D1Database;
+    JWT_SECRET: string;
 }
 
 interface RecordData {
@@ -12,29 +14,26 @@ interface RecordData {
     amount: number;
     date: string;
     remark?: string;
-    memberId?: number | null;  // 关联成员ID
+    memberId?: number | null;
 }
 
 interface BatchImportRequest {
     records: RecordData[];
-    memberId?: number | null;  // 批量分配给所有记录的成员ID
+    memberId?: number | null;
 }
 
 const RECORD_TYPES = ['支出', '收入'];
 
-// 支出类别
 const EXPENSE_CATEGORIES = [
     '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
     '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗',
     '通讯', '服饰', '还贷'
 ];
 
-// 收入类别
 const INCOME_CATEGORIES = [
     '工资', '投资收入', '稿费收入', '其他'
 ];
 
-// 所有类别
 const CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
 
 const VALIDATION = {
@@ -42,13 +41,6 @@ const VALIDATION = {
         min: 0,
         max: 999999999
     }
-};
-
-// CORS headers
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
 };
 
 export const onRequestOptions: PagesFunction<Env> = async () => {
@@ -59,10 +51,15 @@ export const onRequestOptions: PagesFunction<Env> = async () => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
     try {
+        // 认证检查
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { DB } = context.env;
         const body = await context.request.json();
 
-        // 支持两种格式：直接数组或 { records, memberId } 对象
         let records: RecordData[];
         let batchMemberId: number | null = null;
 
@@ -141,16 +138,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             }
         }
 
-        // Prepare statements with member_id support
         const statements = records.map(record => {
-            // 优先使用记录自身的memberId，否则使用批量分配的memberId
             const memberId = record.memberId !== undefined ? record.memberId : batchMemberId;
             return DB.prepare(
                 'INSERT INTO records (type, category, amount, date, remark, member_id) VALUES (?, ?, ?, ?, ?, ?)'
             ).bind(record.type, record.category, record.amount, record.date, record.remark || '', memberId);
         });
 
-        // Execute batch
         const results = await DB.batch(statements);
 
         return new Response(JSON.stringify({

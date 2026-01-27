@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx wrangler:*)",
+      "Bash(echo:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(wrangler d1 execute:*)",
+      "Bash(node ./node_modules/wrangler/bin/wrangler.js:*)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(powershell -Command \"Get-Content -Path ''f:\\\\AI记账软件\\\\记账小程序\\\\京东交易流水.csv'' -TotalCount 2 -Encoding Default\")",
+      "Bash(powershell -Command \"[System.IO.File]::ReadAllBytes\\(''f:\\\\AI记账软件\\\\记账小程序\\\\京东交易流水.csv''\\)[0..50] -join '',''\")"
+    ]
+  }
+}

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { PlusCircle, DollarSign, Calendar as CalendarIcon, FileText } from 'lucide-vue-next'
 import CustomSelect from './ui/CustomSelect.vue'
 import { apiConfig } from '../config/api'
+import { authFetch } from '../utils/auth'
 import { RECORD_TYPES, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types'
 
 const emit = defineEmits<{
@@ -48,7 +49,7 @@ const handleSubmit = async () => {
   try {
     loading.value = true
 
-    const response = await fetch(apiConfig.endpoints.records, {
+    const response = await authFetch(apiConfig.endpoints.records, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

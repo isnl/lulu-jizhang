@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { Users, Plus, Edit2, Trash2, Save, X, Loader2 } from 'lucide-vue-next'
 import type { Member } from '../types'
+import { authFetch } from '../utils/auth'
 import Modal from './ui/Modal.vue'
 
 const emit = defineEmits<{
@@ -39,7 +40,7 @@ const presetColors = [
 const loadMembers = async () => {
   isLoading.value = true
   try {
-    const response = await fetch('/api/members')
+    const response = await authFetch('/api/members')
     const result = await response.json()
     if (result.success) {
       members.value = result.data
@@ -83,7 +84,7 @@ const addMember = async () => {
 
   isLoading.value = true
   try {
-    const response = await fetch('/api/members', {
+    const response = await authFetch('/api/members', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -118,7 +119,7 @@ const updateMember = async () => {
 
   isLoading.value = true
   try {
-    const response = await fetch(`/api/members/${editingMember.value.id}`, {
+    const response = await authFetch(`/api/members/${editingMember.value.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -152,7 +153,7 @@ const deleteMember = async (member: Member) => {
 
   isLoading.value = true
   try {
-    const response = await fetch(`/api/members/${member.id}`, {
+    const response = await authFetch(`/api/members/${member.id}`, {
       method: 'DELETE'
     })
     const result = await response.json()

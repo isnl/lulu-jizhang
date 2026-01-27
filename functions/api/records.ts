@@ -1,8 +1,11 @@
 // Cloudflare Functions API for records
 // Path: /api/records
 
+import { authenticate, corsHeaders, unauthorizedResponse } from '../utils/middleware';
+
 interface Env {
     DB: D1Database;
+    JWT_SECRET: string;
 }
 
 interface RecordData {
@@ -39,13 +42,6 @@ const VALIDATION = {
     monthFormat: /^\d{4}-\d{2}$/
 };
 
-// CORS headers
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-};
-
 export const onRequestOptions: PagesFunction<Env> = async () => {
     return new Response(null, {
         headers: corsHeaders
@@ -55,6 +51,12 @@ export const onRequestOptions: PagesFunction<Env> = async () => {
 // POST /api/records - Create new record
 export const onRequestPost: PagesFunction<Env> = async (context) => {
     try {
+        // 认证检查
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { DB } = context.env;
         const body = await context.request.json() as RecordData;
         const { type, category, amount, date, remark = '', memberId = null } = body;
@@ -147,6 +149,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 // GET /api/records - Get records with date range
 export const onRequestGet: PagesFunction<Env> = async (context) => {
     try {
+        // 认证检查
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { DB } = context.env;
         const url = new URL(context.request.url);
         const startMonth = url.searchParams.get('startMonth');
@@ -235,24 +243,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
 // Get daily records for single month
 async function getDailyRecords(DB: D1Database, startDate: string, endDate: string, memberId: number | null | 'all' | 'family' = 'all') {
-    // Build query based on memberId filter
-    // 'family' 和 'all' 都表示查询所有记录（所有成员+家庭共同）
-    // 只有选择具体成员时才做筛选
     let query = 'SELECT date, category, SUM(amount) as totalAmount FROM records WHERE date >= ? AND date < ?';
     const params: any[] = [startDate, endDate];
 
     if (typeof memberId === 'number') {
-        // 只查询特定成员的记录
         query += ' AND member_id = ?';
         params.push(memberId);
     }
-    // 'family' 和 'all' 都不添加额外过滤条件，统计所有账单
 
     query += ' GROUP BY date, category ORDER BY date';
 
     const { results } = await DB.prepare(query).bind(...params).all();
 
-    // Generate all dates in range
     const allDates: string[] = [];
     const current = new Date(startDate);
     const end = new Date(endDate);
@@ -262,7 +264,6 @@ async function getDailyRecords(DB: D1Database, startDate: string, endDate: strin
         current.setDate(current.getDate() + 1);
     }
 
-    // Initialize daily data
     const dailyData: Record<string, any> = {};
     allDates.forEach(dateKey => {
         dailyData[dateKey] = {
@@ -274,7 +275,6 @@ async function getDailyRecords(DB: D1Database, startDate: string, endDate: strin
         });
     });
 
-    // Fill in actual data
     results.forEach((record: any) => {
         const dateKey = record.date;
         if (dailyData[dateKey]) {
@@ -282,7 +282,6 @@ async function getDailyRecords(DB: D1Database, startDate: string, endDate: strin
         }
     });
 
-    // Convert to array and calculate daily totals
     const result = allDates.map(dateKey => {
         const dayData = dailyData[dateKey];
         const dailyTotal = CATEGORIES.reduce((sum, category) => sum + (dayData[category] || 0), 0);
@@ -298,9 +297,6 @@ async function getDailyRecords(DB: D1Database, startDate: string, endDate: strin
 
 // Get monthly records for multiple months
 async function getMonthlyRecords(DB: D1Database, startDate: string, endDate: string, memberId: number | null | 'all' | 'family' = 'all') {
-    // Build query based on memberId filter
-    // 'family' 和 'all' 都表示查询所有记录（所有成员+家庭共同）
-    // 只有选择具体成员时才做筛选
     let query = `SELECT
       strftime('%Y-%m', date) as month,
       category,
@@ -310,17 +306,14 @@ async function getMonthlyRecords(DB: D1Database, startDate: string, endDate: str
     const params: any[] = [startDate, endDate];
 
     if (typeof memberId === 'number') {
-        // 只查询特定成员的记录
         query += ' AND member_id = ?';
         params.push(memberId);
     }
-    // 'family' 和 'all' 都不添加额外过滤条件，统计所有账单
 
     query += ' GROUP BY month, category ORDER BY month';
 
     const { results } = await DB.prepare(query).bind(...params).all();
 
-    // Generate all months in range
     const allMonths: string[] = [];
     const current = new Date(startDate);
     const end = new Date(endDate);
@@ -330,7 +323,6 @@ async function getMonthlyRecords(DB: D1Database, startDate: string, endDate: str
         current.setMonth(current.getMonth() + 1);
     }
 
-    // Initialize monthly data
     const monthlyData: Record<string, any> = {};
     allMonths.forEach(monthKey => {
         monthlyData[monthKey] = {
@@ -342,7 +334,6 @@ async function getMonthlyRecords(DB: D1Database, startDate: string, endDate: str
         });
     });
 
-    // Fill in actual data
     results.forEach((record: any) => {
         const monthKey = record.month;
         if (monthlyData[monthKey]) {
@@ -350,7 +341,6 @@ async function getMonthlyRecords(DB: D1Database, startDate: string, endDate: str
         }
     });
 
-    // Convert to array and calculate monthly totals
     const result = allMonths.map(monthKey => {
         const monthData = monthlyData[monthKey];
         const monthlyTotal = CATEGORIES.reduce((sum, category) => sum + (monthData[category] || 0), 0);

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Upload, FileText, CreditCard, Smartphone, Loader2, Users } from 'lucide-vue-next'
+import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2 } from 'lucide-vue-next'
 import * as XLSX from 'xlsx'
 import { convertGBKtoUTF8 } from '../utils/gbk-converter'
+import { authFetch } from '../utils/auth'
 import type { RecordData, Member } from '../types'
 import Modal from './ui/Modal.vue'
 import CustomSelect from './ui/CustomSelect.vue'
@@ -22,7 +23,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const isProcessing = ref(false)
 const previewRecords = ref<RecordData[]>([])
 const showPreview = ref(false)
-const billType = ref<'wechat' | 'alipay' | 'credit'>('wechat') // 账单类型
+const billType = ref<'wechat' | 'alipay' | 'credit' | 'jd' | 'bank'>('wechat') // 账单类型
 
 // 成员选择相关
 const selectedMemberId = ref<number | null>(null)
@@ -305,6 +306,251 @@ const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, p
   return category
 }
 
+// 京东分类映射
+const mapJDCategory = (type: '支出' | '收入', jdCategory: string, merchant: string, description: string): string => {
+  if (type === '支出') {
+    // 京东分类 -> 系统分类映射
+    const categoryMapping: Record<string, string> = {
+      '数码电器': '电子产品',
+      '食品酒饮': '饮食',
+      '服饰内衣': '服饰',
+      '美妆个护': '美妆护肤',
+      '宠物生活': '宠物',
+      '医疗保健': '医疗',
+      '手机通讯': '电子产品',
+      '电脑办公': '电子产品',
+      '运动户外': '娱乐',
+      '汽车用品': '交通',
+      '清洁纸品': '日用品',
+      '日用百货': '日用品',
+      '生活服务': '日用品',
+      '休闲娱乐': '娱乐',
+      '鞋服箱包': '服饰',
+    }
+
+    // 优先使用京东分类
+    if (jdCategory && categoryMapping[jdCategory]) {
+      return categoryMapping[jdCategory]
+    }
+
+    // 如果是"其他网购"或"网购"，尝试从商户/商品描述智能匹配
+    return smartCategoryMapping(type, merchant, description, '')
+  } else {
+    // 收入分类
+    if (merchant.includes('佣金') || description.includes('佣金')) {
+      return '其他'
+    }
+    return '其他'
+  }
+}
+
+// 解析京东金额（处理退款情况）
+const parseJDAmount = (amountStr: string): number => {
+  // 格式示例:
+  // "28.61" -> 28.61
+  // "17.72(已全额退款)" -> 0 (跳过)
+  // "28.37(已退款2.40)" -> 28.37 - 2.40 = 25.97
+
+  if (amountStr.includes('已全额退款')) {
+    return 0 // 全额退款的记录金额为0，会被过滤
+  }
+
+  const match = amountStr.match(/^([\d.]+)(?:\(已退款([\d.]+)\))?/)
+  if (!match) {
+    // 尝试提取第一个数字
+    const simpleMatch = amountStr.match(/([\d.]+)/)
+    return simpleMatch ? parseFloat(simpleMatch[1]) : NaN
+  }
+
+  const baseAmount = parseFloat(match[1])
+  const refundAmount = match[2] ? parseFloat(match[2]) : 0
+
+  return baseAmount - refundAmount
+}
+
+// 解析京东交易流水
+const parseJDWalletBill = (rows: any[][]): RecordData[] => {
+  // 表头: 交易时间,商户名称,交易说明,金额,收/付款方式,交易状态,收/支,交易分类,交易订单号,商家订单号,备注
+  // 去掉BOM字符并查找表头
+  const headerRowIndex = rows.findIndex(row => {
+    const firstCell = String(row[0] || '').replace(/^\uFEFF/, '').trim()
+    return firstCell.includes('交易时间')
+  })
+
+  if (headerRowIndex === -1) {
+    throw new Error('无法识别京东账单格式，未找到"交易时间"列')
+  }
+
+  const records: RecordData[] = []
+
+  for (let i = headerRowIndex + 1; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || row.length < 7) continue
+
+    // 清理制表符和空白
+    const dateStr = String(row[0] || '').replace(/\t/g, '').trim()
+    const merchant = String(row[1] || '').trim()        // 商户名称
+    const description = String(row[2] || '').replace(/\t/g, '').trim() // 交易说明
+    const amountStr = String(row[3] || '').trim()       // 金额
+    const direction = String(row[6] || '').trim()       // 收/支
+    const jdCategory = String(row[7] || '').trim()      // 交易分类
+
+    // 只处理"收入"和"支出"，跳过"不计收支"
+    if (direction !== '支出' && direction !== '收入') continue
+
+    // 解析金额（处理退款情况）
+    const amount = parseJDAmount(amountStr)
+    if (isNaN(amount) || amount <= 0) continue
+
+    // 解析日期
+    const dateObj = new Date(dateStr)
+    if (isNaN(dateObj.getTime())) continue
+    const formattedDate = dateObj.toISOString().split('T')[0]
+
+    // 构建备注
+    const remark = `${merchant} - ${description}`.substring(0, 50)
+
+    // 映射分类
+    const category = mapJDCategory(direction as '支出' | '收入', jdCategory, merchant, description)
+
+    records.push({
+      type: direction as '支出' | '收入',
+      category,
+      amount,
+      date: formattedDate,
+      remark
+    })
+  }
+
+  return records
+}
+
+// 银行流水分类映射
+const mapBankCategory = (type: '支出' | '收入', summary: string, counterName: string): string => {
+  if (type === '支出') {
+    // 保险类 - 优先判断
+    if (counterName.includes('保险')) {
+      return '医疗'
+    }
+
+    // 网购类
+    if (summary.includes('拼多多') || summary.includes('抖音') ||
+        summary.includes('京东') || summary.includes('淘宝') ||
+        summary.includes('天猫') || summary.includes('唯品会')) {
+      return '日用品'
+    }
+
+    // 通讯类
+    if (counterName.includes('移动') || counterName.includes('联通') ||
+        counterName.includes('电信') || summary.includes('话费')) {
+      return '通讯'
+    }
+
+    // 交通类
+    if (counterName.includes('加油') || counterName.includes('石油') ||
+        counterName.includes('石化') || summary.includes('ETC')) {
+      return '交通'
+    }
+
+    // 水电燃气
+    if (counterName.includes('电力') || counterName.includes('燃气') ||
+        counterName.includes('水务') || counterName.includes('供暖')) {
+      return '生活费'
+    }
+
+    return '日用品' // 默认
+  } else {
+    // 收入分类
+    if (summary.includes('工资') || summary.includes('薪') ||
+        counterName.includes('人力') || counterName.includes('薪酬')) {
+      return '工资'
+    }
+
+    // 政府补贴/退税
+    if (counterName.includes('预算') || counterName.includes('财政') ||
+        counterName.includes('税务') || summary.includes('退税')) {
+      return '其他'
+    }
+
+    // 投资收益
+    if (counterName.includes('基金') || counterName.includes('证券') ||
+        counterName.includes('理财') || summary.includes('利息')) {
+      return '投资收入'
+    }
+
+    return '其他'
+  }
+}
+
+// 解析银行流水（中信银行格式）
+const parseBankBill = (rows: any[][]): RecordData[] => {
+  // 表头: 交易日期,收入金额,支出金额,交易摘要,对方账号,对方户名
+  // 去掉BOM字符并查找表头
+  const headerRowIndex = rows.findIndex(row => {
+    const firstCell = String(row[0] || '').replace(/^\uFEFF/, '').trim()
+    return firstCell.includes('交易日期')
+  })
+
+  if (headerRowIndex === -1) {
+    throw new Error('无法识别银行账单格式，未找到"交易日期"列')
+  }
+
+  const records: RecordData[] = []
+
+  for (let i = headerRowIndex + 1; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || row.length < 4) continue
+
+    const dateStr = String(row[0] || '').trim()           // 交易日期 20250112
+    const incomeStr = String(row[1] || '').trim()         // 收入金额
+    const expenseStr = String(row[2] || '').trim()        // 支出金额
+    const summary = String(row[3] || '').trim()           // 交易摘要
+    const counterName = String(row[5] || '').trim()       // 对方户名
+
+    // 解析金额
+    const income = parseFloat(incomeStr) || 0
+    const expense = parseFloat(expenseStr) || 0
+
+    if (income === 0 && expense === 0) continue
+
+    // 可选：过滤转账记录（自己账户之间的资金转移）
+    if (summary.includes('转账') || summary.includes('转出') ||
+        summary.includes('转入') || summary.includes('兑出')) {
+      continue
+    }
+
+    const type: '支出' | '收入' = income > 0 ? '收入' : '支出'
+    const amount = income > 0 ? income : expense
+
+    // 解析日期 20250112 -> 2025-01-12
+    let formattedDate: string
+    if (dateStr.length === 8 && /^\d{8}$/.test(dateStr)) {
+      formattedDate = `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+    } else {
+      // 尝试其他日期格式
+      const dateObj = new Date(dateStr)
+      if (isNaN(dateObj.getTime())) continue
+      formattedDate = dateObj.toISOString().split('T')[0]
+    }
+
+    // 构建备注
+    const remark = `${summary} - ${counterName}`.substring(0, 50)
+
+    // 映射分类
+    const category = mapBankCategory(type, summary, counterName)
+
+    records.push({
+      type,
+      category,
+      amount,
+      date: formattedDate,
+      remark
+    })
+  }
+
+  return records
+}
+
 // 解析信用卡账单 (通过 DeepSeek AI)
 const parseCreditBill = async (file: File): Promise<RecordData[]> => {
   try {
@@ -317,7 +563,7 @@ const parseCreditBill = async (file: File): Promise<RecordData[]> => {
     console.log('---------------- PDF Content End ----------------')
     
     // 调用智能解析 API
-    const response = await fetch('/api/bill/analyze', {
+    const response = await authFetch('/api/bill/analyze', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -399,8 +645,37 @@ const handleFileChange = async (event: Event) => {
         // 信用卡账单处理
         records = await parseCreditBill(file)
         // 信用卡账单暂不支持自动检测姓名，需要手动选择
+    } else if (billType.value === 'jd' || billType.value === 'bank') {
+        // 京东和银行账单：直接读取CSV文本并解析
+        const text = await file.text()
+        const lines = text.split('\n').map(line => line.trim()).filter(line => line)
+        const rows = lines.map(line => {
+          // 简单CSV解析：处理引号内的逗号
+          const result: string[] = []
+          let current = ''
+          let inQuotes = false
+          for (let i = 0; i < line.length; i++) {
+            const char = line[i]
+            if (char === '"') {
+              inQuotes = !inQuotes
+            } else if (char === ',' && !inQuotes) {
+              result.push(current.trim())
+              current = ''
+            } else {
+              current += char
+            }
+          }
+          result.push(current.trim())
+          return result
+        })
+
+        if (billType.value === 'jd') {
+          records = parseJDWalletBill(rows)
+        } else {
+          records = parseBankBill(rows)
+        }
     } else {
-        // 现有的 Excel/CSV 处理
+        // 现有的 Excel/CSV 处理（微信、支付宝）
         let workbook: any
 
         if (billType.value === 'alipay') {
@@ -473,7 +748,7 @@ const confirmImport = async () => {
         // 只导入有效数据（validRecords），不导入重复数据
         const dataToImport = billType.value === 'credit' ? validRecords.value : previewRecords.value
 
-        const response = await fetch('/api/records/batch', {
+        const response = await authFetch('/api/records/batch', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -514,46 +789,46 @@ const confirmImport = async () => {
     <!-- 账单类型选择 -->
     <div class="mb-6">
       <label class="block text-sm font-semibold text-gray-700 mb-3">选择账单类型</label>
-      <div class="grid grid-cols-3 gap-3">
+      <div class="grid grid-cols-5 gap-2">
         <button
           @click="billType = 'wechat'"
           :class="[
-            'p-4 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-2',
+            'p-3 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-1.5',
             billType === 'wechat'
               ? 'b-emerald-500 bg-emerald-50 shadow-md'
               : 'b-gray-200 bg-white hover:b-emerald-300 hover:bg-emerald-50/50'
           ]"
         >
-          <Smartphone 
-            :size="28" 
+          <Smartphone
+            :size="24"
             :class="billType === 'wechat' ? 'text-emerald-600' : 'text-gray-400'"
           />
-          <span 
+          <span
             :class="[
-              'text-sm font-semibold',
+              'text-xs font-semibold',
               billType === 'wechat' ? 'text-emerald-700' : 'text-gray-600'
             ]"
           >
-            微信支付
+            微信
           </span>
         </button>
 
         <button
           @click="billType = 'alipay'"
           :class="[
-            'p-4 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-2',
+            'p-3 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-1.5',
             billType === 'alipay'
               ? 'b-blue-500 bg-blue-50 shadow-md'
               : 'b-gray-200 bg-white hover:b-blue-300 hover:bg-blue-50/50'
           ]"
         >
-          <FileText 
-            :size="28" 
+          <FileText
+            :size="24"
             :class="billType === 'alipay' ? 'text-blue-600' : 'text-gray-400'"
           />
-          <span 
+          <span
             :class="[
-              'text-sm font-semibold',
+              'text-xs font-semibold',
               billType === 'alipay' ? 'text-blue-700' : 'text-gray-600'
             ]"
           >
@@ -562,45 +837,96 @@ const confirmImport = async () => {
         </button>
 
         <button
+          @click="billType = 'jd'"
+          :class="[
+            'p-3 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-1.5',
+            billType === 'jd'
+              ? 'b-red-500 bg-red-50 shadow-md'
+              : 'b-gray-200 bg-white hover:b-red-300 hover:bg-red-50/50'
+          ]"
+        >
+          <ShoppingBag
+            :size="24"
+            :class="billType === 'jd' ? 'text-red-600' : 'text-gray-400'"
+          />
+          <span
+            :class="[
+              'text-xs font-semibold',
+              billType === 'jd' ? 'text-red-700' : 'text-gray-600'
+            ]"
+          >
+            京东
+          </span>
+        </button>
+
+        <button
+          @click="billType = 'bank'"
+          :class="[
+            'p-3 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-1.5',
+            billType === 'bank'
+              ? 'b-amber-500 bg-amber-50 shadow-md'
+              : 'b-gray-200 bg-white hover:b-amber-300 hover:bg-amber-50/50'
+          ]"
+        >
+          <Building2
+            :size="24"
+            :class="billType === 'bank' ? 'text-amber-600' : 'text-gray-400'"
+          />
+          <span
+            :class="[
+              'text-xs font-semibold',
+              billType === 'bank' ? 'text-amber-700' : 'text-gray-600'
+            ]"
+          >
+            银行
+          </span>
+        </button>
+
+        <button
           @click="billType = 'credit'"
           :class="[
-            'p-4 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-2',
+            'p-3 rounded-xl b-solid b-2px transition-all flex flex-col items-center gap-1.5',
             billType === 'credit'
               ? 'b-purple-500 bg-purple-50 shadow-md'
               : 'b-gray-200 bg-white hover:b-purple-300 hover:bg-purple-50/50'
           ]"
         >
-          <CreditCard 
-            :size="28" 
+          <CreditCard
+            :size="24"
             :class="billType === 'credit' ? 'text-purple-600' : 'text-gray-400'"
           />
-          <span 
+          <span
             :class="[
-              'text-sm font-semibold',
+              'text-xs font-semibold',
               billType === 'credit' ? 'text-purple-700' : 'text-gray-600'
             ]"
           >
-            信用卡PDF
+            信用卡
           </span>
         </button>
       </div>
     </div>
 
     <!-- 上传按钮 -->
-    <button 
-      @click="triggerFileInput" 
+    <button
+      @click="triggerFileInput"
       class="w-full px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold rounded-lg hover:from-emerald-600 hover:to-teal-600 transition-all shadow-md hover:shadow-lg hover:translate-y-[-1px] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       :disabled="isProcessing"
     >
       <Loader2 v-if="isProcessing" :size="20" class="animate-spin" />
       <Upload v-else :size="20" />
-      <span>{{ isProcessing ? '处理中...' : `选择${billType === 'wechat' ? '微信' : (billType === 'alipay' ? '支付宝' : '信用卡')}账单` }}</span>
+      <span>{{ isProcessing ? '处理中...' : `选择${
+        billType === 'wechat' ? '微信' :
+        billType === 'alipay' ? '支付宝' :
+        billType === 'jd' ? '京东' :
+        billType === 'bank' ? '银行' : '信用卡'
+      }账单` }}</span>
     </button>
-    <input 
-      ref="fileInput" 
-      type="file" 
-      :accept="billType === 'credit' ? '.pdf' : '.xlsx,.xls,.csv'" 
-      class="hidden" 
+    <input
+      ref="fileInput"
+      type="file"
+      :accept="billType === 'credit' ? '.pdf' : '.xlsx,.xls,.csv'"
+      class="hidden"
       @change="handleFileChange"
     >
 
@@ -618,6 +944,14 @@ const confirmImport = async () => {
         <li v-if="billType === 'alipay'" class="flex items-start gap-2">
           <span class="text-blue-500 mt-0.5">•</span>
           <span>支持支付宝账单导出文件(CSV 格式,需使用 GBK 编码)</span>
+        </li>
+        <li v-if="billType === 'jd'" class="flex items-start gap-2">
+          <span class="text-red-500 mt-0.5">•</span>
+          <span>支持京东交易流水导出文件(CSV 格式),自动过滤退款和不计收支</span>
+        </li>
+        <li v-if="billType === 'bank'" class="flex items-start gap-2">
+          <span class="text-amber-500 mt-0.5">•</span>
+          <span>支持中信银行等银行流水(CSV 格式),自动过滤转账类记录</span>
         </li>
         <li v-if="billType === 'credit'" class="flex items-start gap-2">
           <span class="text-purple-500 mt-0.5">•</span>

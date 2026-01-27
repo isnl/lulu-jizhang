@@ -3,6 +3,7 @@ import { ref, onMounted, watch } from 'vue'
 import { Search, Plus, Upload, Users } from 'lucide-vue-next'
 import MonthPicker from './ui/MonthPicker.vue'
 import { apiConfig } from '../config/api'
+import { authFetch } from '../utils/auth'
 import type { RecordData, Member } from '../types'
 
 const props = defineProps<{
@@ -54,7 +55,7 @@ const loadRecords = async () => {
       url += `&memberId=${selectedMemberId.value}`
     }
 
-    const response = await fetch(url)
+    const response = await authFetch(url)
     const result = await response.json()
 
     if (!response.ok) {

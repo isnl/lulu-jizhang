@@ -1,8 +1,11 @@
 // Cloudflare Functions API for single member operations
 // Path: /api/members/[id]
 
+import { authenticate, corsHeaders, unauthorizedResponse } from '../../utils/middleware';
+
 interface Env {
     DB: D1Database;
+    JWT_SECRET: string;
 }
 
 interface MemberData {
@@ -12,22 +15,18 @@ interface MemberData {
     isActive?: boolean;
 }
 
-// CORS headers
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-};
-
 export const onRequestOptions: PagesFunction<Env> = async () => {
-    return new Response(null, {
-        headers: corsHeaders
-    });
+    return new Response(null, { headers: corsHeaders });
 };
 
 // GET /api/members/[id] - Get single member
 export const onRequestGet: PagesFunction<Env> = async (context) => {
     try {
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { DB } = context.env;
         const id = context.params.id as string;
 
@@ -74,12 +73,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 // PUT /api/members/[id] - Update member
 export const onRequestPut: PagesFunction<Env> = async (context) => {
     try {
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { DB } = context.env;
         const id = context.params.id as string;
         const body = await context.request.json() as MemberData;
         const { name, wechatNickname, color, isActive } = body;
 
-        // Check if member exists
         const existing = await DB.prepare(
             'SELECT id FROM members WHERE id = ?'
         ).bind(id).first();
@@ -93,7 +96,6 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
             });
         }
 
-        // Build update query dynamically
         const updates: string[] = [];
         const values: any[] = [];
 
@@ -106,7 +108,6 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
                     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
                 });
             }
-            // Check if new name conflicts with another member
             const nameConflict = await DB.prepare(
                 'SELECT id FROM members WHERE name = ? AND id != ?'
             ).bind(name.trim(), id).first();
@@ -154,7 +155,6 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
             `UPDATE members SET ${updates.join(', ')} WHERE id = ?`
         ).bind(...values).run();
 
-        // Get updated member
         const updated = await DB.prepare(
             'SELECT id, name, wechat_nickname, color, is_active, created_at, updated_at FROM members WHERE id = ?'
         ).bind(id).first();
@@ -187,13 +187,17 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     }
 };
 
-// DELETE /api/members/[id] - Soft delete member (set isActive to false)
+// DELETE /api/members/[id] - Soft delete member
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
     try {
+        const auth = await authenticate(context.request, context.env);
+        if (!auth.success) {
+            return unauthorizedResponse();
+        }
+
         const { DB } = context.env;
         const id = context.params.id as string;
 
-        // Check if member exists
         const existing = await DB.prepare(
             'SELECT id FROM members WHERE id = ?'
         ).bind(id).first();
@@ -207,7 +211,6 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
             });
         }
 
-        // Soft delete: set is_active to 0
         await DB.prepare(
             'UPDATE members SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         ).bind(id).run();
