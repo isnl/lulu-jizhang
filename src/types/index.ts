@@ -50,6 +50,7 @@ export interface DailyRecord extends Omit<RecordData, 'type'> {
     饰品?: number
     美妆护肤?: number
     医疗?: number
+    保险?: number
     通讯?: number
     服饰?: number
     还贷?: number
@@ -75,6 +76,7 @@ export interface MonthlyRecord extends Omit<RecordData, 'type'> {
     饰品?: number
     美妆护肤?: number
     医疗?: number
+    保险?: number
     通讯?: number
     服饰?: number
     还贷?: number
@@ -90,7 +92,7 @@ export const RECORD_TYPES = ['支出', '收入'] as const
 // 支出类别
 export const EXPENSE_CATEGORIES = [
     '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
-    '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗',
+    '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗', '保险',
     '通讯', '服饰', '还贷'
 ] as const
 

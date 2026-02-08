@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Wallet, Lock, User, Loader2 } from 'lucide-vue-next'
+import { Wallet, Lock, User, Loader2, Eye, EyeOff } from 'lucide-vue-next'
 import { login } from '../utils/auth'
 
 const emit = defineEmits<{
@@ -9,6 +9,7 @@ const emit = defineEmits<{
 
 const username = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
 
@@ -78,11 +79,20 @@ const handleSubmit = async () => {
                             </div>
                             <input
                                 v-model="password"
-                                type="password"
+                                :type="showPassword ? 'text' : 'password'"
                                 placeholder="请输入密码"
-                                class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
+                                class="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
                                 :disabled="loading"
                             />
+                            <button
+                                type="button"
+                                @click="showPassword = !showPassword"
+                                class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                                :disabled="loading"
+                            >
+                                <Eye v-if="!showPassword" :size="18" />
+                                <EyeOff v-else :size="18" />
+                            </button>
                         </div>
                     </div>
 
@@ -95,7 +105,8 @@ const handleSubmit = async () => {
                     <button
                         type="submit"
                         :disabled="loading"
-                        class="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white py-3 rounded-xl font-semibold hover:from-emerald-600 hover:to-teal-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        style="background: linear-gradient(to right, rgb(16, 185, 129), rgb(20, 184, 166)); color: white;"
+                        class="w-full py-3.5 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         <Loader2 v-if="loading" :size="20" class="animate-spin" />
                         <span>{{ loading ? '登录中...' : '登 录' }}</span>

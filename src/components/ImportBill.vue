@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2 } from 'lucide-vue-next'
+import { ref, computed, onMounted } from 'vue'
+import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2, AlertCircle } from 'lucide-vue-next'
 import * as XLSX from 'xlsx'
 import { convertGBKtoUTF8 } from '../utils/gbk-converter'
 import { authFetch } from '../utils/auth'
@@ -29,6 +29,8 @@ const billType = ref<'wechat' | 'alipay' | 'credit' | 'jd' | 'bank'>('wechat') /
 const selectedMemberId = ref<number | null>(null)
 const detectedMemberName = ref<string>('')  // 从账单中检测到的姓名/昵称
 const suggestedMemberId = ref<number | null>(null)  // 智能推荐的成员ID
+const showMemberConfirm = ref(false)  // 成员确认对话框
+const lastSelectedMemberId = ref<number | null>(null)  // 上次选择的成员ID
 
 // 分类后的数据
 const validRecords = ref<RecordData[]>([]) // 需导入的数据
@@ -64,6 +66,14 @@ const matchMember = (name: string, isWechat: boolean = false): number | null => 
   return null
 }
 
+// 组件挂载时读取上次选择的成员
+onMounted(() => {
+  const saved = localStorage.getItem('lastSelectedMemberId')
+  if (saved && saved !== 'null') {
+    lastSelectedMemberId.value = parseInt(saved)
+  }
+})
+
 const triggerFileInput = () => {
   fileInput.value?.click()
 }
@@ -72,6 +82,22 @@ const triggerFileInput = () => {
 const isDuplicateRecord = (record: RecordData): boolean => {
   const remark = record.remark || ''
   return remark.includes('支付宝-') || remark.includes('财付通-')
+}
+
+// 从微信账单中提取昵称
+const extractWechatNickname = (rows: any[][]): string => {
+  // 微信账单前几行通常包含用户信息
+  // 格式可能是: "微信昵称,xxx" 或类似格式
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    const row = rows[i]
+    if (row && row.length >= 2) {
+      const firstCell = String(row[0] || '').trim()
+      if (firstCell === '微信昵称' || firstCell.includes('昵称')) {
+        return String(row[1] || '').trim()
+      }
+    }
+  }
+  return ''
 }
 
 // 分类数据
@@ -104,6 +130,7 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       if (!row || row.length < 6) continue // Skip empty rows
 
       const dateStr = row[0]
+      const transactionType = row[1] // 交易类型
       const counterparty = row[2] // 交易对方
       const product = row[3] // 商品
       const direction = row[4] // 收/支
@@ -111,7 +138,7 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       const status = row[7] // 当前状态
 
       // Filter valid transaction status
-      if (status !== '支付成功' && status !== '已到账') continue
+      if (status !== '支付成功' && status !== '已到账' && status !== '对方已收钱' && status !== '朋友已收钱' && status !== '已存入零钱' && status !== '已转账') continue
 
       // Determine Type
       let type: '支出' | '收入'
@@ -128,11 +155,11 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       if (isNaN(dateObj.getTime())) continue
       const formattedDate = dateObj.toISOString().split('T')[0]
 
-      // Construct Remark
+      // Construct Remark - 包含交易类型信息
       const remark = `${counterparty} - ${product}`.substring(0, 50) // Limit length
 
-      // Smart Category Mapping - 传入备注用于判断
-      const category = smartCategoryMapping(type, counterparty, product, remark)
+      // Smart Category Mapping - 传入交易类型、备注用于判断
+      const category = smartCategoryMapping(type, counterparty, product, remark, transactionType)
 
       records.push({
           type,
@@ -236,8 +263,19 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
 }
 
 // 智能分类映射(微信和支付宝共用)
-const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string, remark: string = ''): string => {
+const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string, remark: string = '', transactionType: string = ''): string => {
   let category = type === '支出' ? '日用品' : '其他' // Default
+
+  // 优先判断人情类交易(转账、红包等) - 不区分收支
+  const relationshipKeywords = ['转账', '红包', '发红包', '微信红包', '赞赏码', '收款码', '赞赏']
+  if (relationshipKeywords.some(keyword => 
+    transactionType.includes(keyword) || 
+    counterparty.includes(keyword) || 
+    product.includes(keyword) || 
+    remark.includes(keyword)
+  )) {
+    return type === '支出' ? '人情' : '其他'
+  }
 
   if (type === '支出') {
     // 支出分类映射规则(优先级从高到低)
@@ -263,8 +301,14 @@ const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, p
       // 饰品
       { keywords: ['喜乐', '崔小七', '饰品', '首饰', '珠宝'], category: '饰品' },
 
+      // 人情 - 转账、红包等
+      { keywords: ['转账', '红包', '发红包', '微信红包', '赞赏码', '收款码'], category: '人情' },
+
       // 交通
       { keywords: ['停车', '打车', '滴滴', '公交', '地铁', '加油', '出行', '中国铁路', '12306'], category: '交通' },
+
+      // 保险 - 优先级高于医疗
+      { keywords: ['保险', '平安', '太平洋保险', '人寿', '车险', '意外险', '重疾险', '医疗险', '寿险'], category: '保险' },
 
       // 医疗
       { keywords: ['医院', '药店', '诊所', '体检', '挂号'], category: '医疗' },
@@ -430,7 +474,7 @@ const mapBankCategory = (type: '支出' | '收入', summary: string, counterName
   if (type === '支出') {
     // 保险类 - 优先判断
     if (counterName.includes('保险')) {
-      return '医疗'
+      return '保险'
     }
 
     // 网购类
@@ -698,7 +742,16 @@ const handleFileChange = async (event: Event) => {
 
         if (billType.value === 'wechat') {
           records = parseWechatBill(rows)
-          // 微信账单暂不支持自动检测昵称
+          // 尝试从微信账单中提取昵称并智能匹配成员
+          const nickname = extractWechatNickname(rows)
+          if (nickname) {
+            detectedMemberName.value = nickname
+            const matchedId = matchMember(nickname, true)
+            if (matchedId) {
+              suggestedMemberId.value = matchedId
+              selectedMemberId.value = matchedId
+            }
+          }
         } else {
           // 支付宝账单
           const result = parseAlipayBill(rows)
@@ -720,6 +773,14 @@ const handleFileChange = async (event: Event) => {
     }
 
     previewRecords.value = records
+
+    // 如果没有自动识别到成员,使用上次选择的成员
+    if (!selectedMemberId.value && lastSelectedMemberId.value) {
+      const member = activeMembers.value.find(m => m.id === lastSelectedMemberId.value)
+      if (member) {
+        selectedMemberId.value = lastSelectedMemberId.value
+      }
+    }
 
     // 如果是信用卡账单，进行数据分类
     if (billType.value === 'credit') {
@@ -743,6 +804,15 @@ const handleFileChange = async (event: Event) => {
 }
 
 const confirmImport = async () => {
+    // 如果未选择成员且未显示过确认对话框,显示确认对话框
+    if (selectedMemberId.value === null && !showMemberConfirm.value) {
+      showMemberConfirm.value = true
+      return
+    }
+
+    // 重置确认状态
+    showMemberConfirm.value = false
+
     isProcessing.value = true
     try {
         // 只导入有效数据（validRecords），不导入重复数据
@@ -762,6 +832,11 @@ const confirmImport = async () => {
         const result = await response.json()
 
         if (response.ok) {
+            // 保存成员选择到localStorage
+            if (selectedMemberId.value !== null) {
+              localStorage.setItem('lastSelectedMemberId', String(selectedMemberId.value))
+            }
+
             emit('success', `成功导入 ${result.count} 条记录`)
             emit('records-added')
             showPreview.value = false
@@ -780,6 +855,10 @@ const confirmImport = async () => {
     } finally {
         isProcessing.value = false
     }
+}
+
+const cancelMemberConfirm = () => {
+  showMemberConfirm.value = false
 }
 </script>
 
@@ -971,12 +1050,12 @@ const confirmImport = async () => {
     <!-- Preview Modal -->
     <Modal :show="showPreview" title="导入预览" size="lg" @close="showPreview = false">
       <!-- 成员选择区域 -->
-      <div v-if="activeMembers.length > 0" class="mb-4 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg b-solid b-1px b-blue-200">
+      <div v-if="activeMembers.length > 0" class="mb-4 px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg b-solid b-2px b-amber-400">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <Users :size="18" class="text-blue-600" />
-            <span class="text-sm font-semibold text-blue-800">选择家庭成员</span>
-            <span v-if="detectedMemberName" class="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+            <Users :size="18" class="text-amber-600" />
+            <span class="text-sm font-bold text-amber-900">⚠️ 请选择账单所属成员</span>
+            <span v-if="detectedMemberName" class="text-xs text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
               检测到: {{ detectedMemberName }}
             </span>
           </div>
@@ -1183,6 +1262,38 @@ const confirmImport = async () => {
             <Loader2 v-if="isProcessing" :size="18" class="animate-spin" />
             <span v-if="billType === 'credit'">确认导入 ({{ validRecords.length }} 条)</span>
             <span v-else>确认导入</span>
+          </button>
+        </div>
+      </template>
+    </Modal>
+
+    <!-- 成员确认对话框 -->
+    <Modal :show="showMemberConfirm" title="确认成员信息" size="sm" @close="cancelMemberConfirm">
+      <div class="px-4 py-6">
+        <div class="flex items-center gap-3 mb-4 p-4 bg-amber-50 rounded-lg b-solid b-1px b-amber-200">
+          <AlertCircle :size="24" class="text-amber-600 flex-shrink-0" />
+          <p class="text-sm text-amber-900">
+            您未选择账单所属成员,这些账单将被记录为<strong>"家庭共同"</strong>账单。
+          </p>
+        </div>
+        <p class="text-sm text-gray-600 mb-4">
+          建议为每笔账单指定所属成员,以便更准确地统计个人消费情况。
+        </p>
+      </div>
+      
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button
+            @click="cancelMemberConfirm"
+            class="px-5 py-2.5 rounded-xl b-solid b-1px b-gray-300 text-gray-700 hover:bg-gray-50 transition-all font-medium"
+          >
+            返回选择
+          </button>
+          <button
+            @click="confirmImport"
+            class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg hover:shadow-xl transition-all"
+          >
+            确认导入为家庭共同
           </button>
         </div>
       </template>
