@@ -10,9 +10,12 @@ database_id = "f1e397c4-7d21-4749-9cf8-9328dbd3f7c3"
 # Environment Variables
 [vars]
 DEEPSEEK_API_KEY = "sk-b4c8d41c1167486585824d2a8e741f8a"
-JWT_SECRET = "your-jwt-secret-key-change-in-production"
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
+JWT_SECRET = "my-jwt-secret@_0127"
+ADMIN_USERNAME = "admin_lll"
+ADMIN_PASSWORD = "admin@lll_159357"
 
 # Pages configuration
 pages_build_output_dir = "dist"
+
+[observability]
+enabled = true

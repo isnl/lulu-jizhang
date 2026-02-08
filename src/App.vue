@@ -170,7 +170,7 @@ const handleSuccess = (msg: string) => {
 
     <!-- Filter Bar - Fixed at top -->
     <div class="sticky top-[88px] z-30 bg-white/95 backdrop-blur-md shadow-md b-b-solid b-b-1px b-b-gray-200">
-      <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-2">
         <RecordFilter
           ref="recordFilterRef"
           :members="members"
@@ -185,7 +185,7 @@ const handleSuccess = (msg: string) => {
     </div>
 
     <!-- Main Content -->
-    <main class="px-4 sm:px-6 lg:px-8 py-8">
+    <main class="px-4 sm:px-6 lg:px-8 py-4">
       <RecordTable
         :records="records"
         :loading="loading"
