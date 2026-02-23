@@ -26,7 +26,7 @@ const RECORD_TYPES = ['支出', '收入'];
 
 const EXPENSE_CATEGORIES = [
     '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
-    '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗',
+    '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗', '保险',
     '通讯', '服饰', '还贷'
 ];
 
@@ -58,7 +58,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         }
 
         const { DB } = context.env;
-        const body = await context.request.json();
+        const body = await context.request.json() as any;
 
         let records: RecordData[];
         let batchMemberId: number | null = null;

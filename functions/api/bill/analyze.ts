@@ -45,13 +45,34 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             })),
         });
 
+        // 动态获取分类关键字配置
+        const { DB } = env;
+        const { results: keywordConfigs } = await DB.prepare('SELECT category, type, keywords FROM category_keywords').all();
+
+        let dynamicRules = '';
+        if (keywordConfigs && keywordConfigs.length > 0) {
+            let ruleIndex = 5;
+            for (const config of keywordConfigs as any[]) {
+                try {
+                    const keywords = JSON.parse(config.keywords);
+                    if (Array.isArray(keywords) && keywords.length > 0) {
+                        const keywordsStr = keywords.map((k: string) => `"${k}"`).join('、');
+                        dynamicRules += `\n${ruleIndex}. 若账单详情包含${keywordsStr}等内容，请强制分类为"${config.category}"。`;
+                        ruleIndex++;
+                    }
+                } catch (e) {
+                    // skip invalid json
+                }
+            }
+        }
+
         const systemPrompt = `你是一个专业的财务账单助手。请帮我分析下面的账单文本，提取出每一笔交易记录。
 
 要求：
 1. 忽略"还款"类型的记录。
 2. 遇到"退款"交易，将其视为"收入"。
 3. 只提取有效的交易记录，忽略无关的文本行。
-4. 如果无法确定分类，可以留空或填"其他"。`;
+4. 如果无法确定分类，可以留空或填"其他"。${dynamicRules}`;
 
         const userMessage = {
             role: 'user' as const,

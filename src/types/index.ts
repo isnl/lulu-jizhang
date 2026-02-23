@@ -103,3 +103,12 @@ export const INCOME_CATEGORIES = [
 
 // 所有类别（用于向后兼容）
 export const CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES] as const
+
+export interface CategoryKeyword {
+    id: number;
+    category: string;
+    type: '支出' | '收入';
+    keywords: string[];
+    createdAt?: string;
+    updatedAt?: string;
+}

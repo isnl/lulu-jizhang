@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Wallet, CheckCircle, XCircle, Info, LogOut, Key } from 'lucide-vue-next'
+import { Wallet, CheckCircle, XCircle, Info, LogOut, Key, Tags } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
 import RecordForm from './components/RecordForm.vue'
 import ImportBill from './components/ImportBill.vue'
@@ -8,6 +8,7 @@ import RecordFilter from './components/RecordFilter.vue'
 import RecordTable from './components/RecordTable.vue'
 import MemberManagement from './components/MemberManagement.vue'
 import ApiTokenManagement from './components/ApiTokenManagement.vue'
+import CategoryKeywordsSettings from './components/CategoryKeywordsSettings.vue'
 import Modal from './components/ui/Modal.vue'
 import type { RecordData, Member } from './types'
 import { isAuthenticated, checkAuth, logout, currentUser, authFetch } from './utils/auth'
@@ -21,6 +22,7 @@ const showRecordModal = ref(false)
 const showImportModal = ref(false)
 const showMemberModal = ref(false)
 const showApiTokenModal = ref(false)
+const showCategoryKeywordModal = ref(false)
 
 // 组件引用
 const recordFilterRef = ref<InstanceType<typeof RecordFilter> | null>(null)
@@ -145,6 +147,14 @@ const handleSuccess = (msg: string) => {
           </div>
           <div class="flex items-center gap-3">
             <button
+              @click="showCategoryKeywordModal = true"
+              class="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+              title="分类规则"
+            >
+              <Tags :size="18" />
+              <span class="hidden sm:inline">分类规则</span>
+            </button>
+            <button
               @click="showApiTokenModal = true"
               class="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
               title="API Token 管理"
@@ -243,6 +253,18 @@ const handleSuccess = (msg: string) => {
       @close="showApiTokenModal = false"
     >
       <ApiTokenManagement
+        @error="handleError"
+        @success="handleSuccess"
+      />
+    </Modal>
+
+    <Modal
+      :show="showCategoryKeywordModal"
+      title="分类规则管理"
+      size="lg"
+      @close="showCategoryKeywordModal = false"
+    >
+      <CategoryKeywordsSettings
         @error="handleError"
         @success="handleSuccess"
       />

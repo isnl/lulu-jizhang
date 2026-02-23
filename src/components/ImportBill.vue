@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2, AlertCircle } from 'lucide-vue-next'
+import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2, AlertCircle, Info } from 'lucide-vue-next'
 import * as XLSX from 'xlsx'
 import { convertGBKtoUTF8 } from '../utils/gbk-converter'
 import { authFetch } from '../utils/auth'
-import type { RecordData, Member } from '../types'
+import type { RecordData, Member, CategoryKeyword } from '../types'
 import Modal from './ui/Modal.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 
@@ -39,6 +39,9 @@ const duplicateRecords = ref<RecordData[]>([]) // 重复数据
 // 导入分类常量
 import { CATEGORIES } from '../types'
 
+// 动态分类关键字列表
+const dynamicCategoryKeywords = ref<CategoryKeyword[]>([])
+
 // 活跃成员列表
 const activeMembers = computed(() => {
   return props.members?.filter(m => m.isActive) || []
@@ -67,10 +70,12 @@ const matchMember = (name: string, isWechat: boolean = false): number | null => 
 }
 
 // 组件挂载时读取上次选择的成员
-onMounted(() => {
+onMounted(async () => {
   const saved = localStorage.getItem('lastSelectedMemberId')
   if (saved && saved !== 'null') {
-    lastSelectedMemberId.value = parseInt(saved)
+    const id = parseInt(saved)
+    lastSelectedMemberId.value = id
+    selectedMemberId.value = id
   }
 })
 
@@ -87,13 +92,21 @@ const isDuplicateRecord = (record: RecordData): boolean => {
 // 从微信账单中提取昵称
 const extractWechatNickname = (rows: any[][]): string => {
   // 微信账单前几行通常包含用户信息
-  // 格式可能是: "微信昵称,xxx" 或类似格式
+  // 格式可能是: "微信昵称,xxx" 或 "微信昵称：[xxx]" 或类似格式
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     const row = rows[i]
-    if (row && row.length >= 2) {
+    if (row && row.length > 0) {
       const firstCell = String(row[0] || '').trim()
-      if (firstCell === '微信昵称' || firstCell.includes('昵称')) {
-        return String(row[1] || '').trim()
+      if (firstCell.startsWith('微信昵称') || firstCell.includes('昵称')) {
+        let val = firstCell.replace(/^微信昵称[：:]\s*/, '').trim()
+        if (val.startsWith('[')) val = val.substring(1)
+        if (val.endsWith(']')) val = val.substring(0, val.length - 1)
+        val = val.trim()
+        
+        if (val === '') {
+          return String(row[1] || '').trim()
+        }
+        return val
       }
     }
   }
@@ -187,10 +200,19 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
   let accountName = ''
   for (let i = 0; i < 4; i++) {
     const row = rows[i]
-    if (row && row.length >= 2) {
+    if (row && row.length > 0) {
       const firstCell = String(row[0] || '').trim()
-      if (firstCell === '姓名' || firstCell.includes('姓名')) {
-        accountName = String(row[1] || '').trim()
+      if (firstCell.startsWith('姓名') || firstCell.startsWith('账号')) {
+        let val = firstCell.replace(/^(姓名|账号)[：:]\s*/, '').trim()
+        if (val.startsWith('[')) val = val.substring(1)
+        if (val.endsWith(']')) val = val.substring(0, val.length - 1)
+        val = val.trim()
+
+        if (val === '') {
+          accountName = String(row[1] || '').trim()
+        } else {
+          accountName = val
+        }
         break
       }
     }
@@ -277,73 +299,23 @@ const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, p
     return type === '支出' ? '人情' : '其他'
   }
 
-  if (type === '支出') {
-    // 支出分类映射规则(优先级从高到低)
-    const categoryRules = [
-      // 生活费 - 根据备注判断
-      { keywords: ['生活费'], category: '生活费' },
-
-      // 宠物 - 根据备注判断
-      { keywords: ['驱虫', '猫粮', '狗粮', '宠物医院', '宠物'], category: '宠物' },
-
-      // 美妆护肤
-      { keywords: ['素心微暖', '美妆', '护肤', '化妆品'], category: '美妆护肤' },
-
-      // 服饰
-      { keywords: ['唯品会', '快乐的鞋子', '衣服', '服饰', '鞋'], category: '服饰' },
-
-      // 学习
-      { keywords: ['得到', '知识', '课程', '培训', '书店'], category: '学习' },
-
-      // 娱乐
-      { keywords: ['电影', '游戏', 'KTV', '酒吧'], category: '娱乐' },
-
-      // 饰品
-      { keywords: ['喜乐', '崔小七', '饰品', '首饰', '珠宝'], category: '饰品' },
-
-      // 人情 - 转账、红包等
-      { keywords: ['转账', '红包', '发红包', '微信红包', '赞赏码', '收款码'], category: '人情' },
-
-      // 交通
-      { keywords: ['停车', '打车', '滴滴', '公交', '地铁', '加油', '出行', '中国铁路', '12306'], category: '交通' },
-
-      // 保险 - 优先级高于医疗
-      { keywords: ['保险', '平安', '太平洋保险', '人寿', '车险', '意外险', '重疾险', '医疗险', '寿险'], category: '保险' },
-
-      // 医疗
-      { keywords: ['医院', '药店', '诊所', '体检', '挂号'], category: '医疗' },
-
-      // 饮食
-      { keywords: ['美团', '饿了么', '外卖', '餐饮', '饭店', '食堂', '盒马', '麻辣', '拼多多平台商户'], category: '饮食' },
-
-      // 日用品
-      { keywords: ['京东', '快团团', '超市', '便利店', '淘宝', '拼多多'], category: '日用品' },
-
-      // 通讯
-      { keywords: ['话费', '流量', '宽带', '移动', '联通', '电信'], category: '通讯' },
-    ]
-
-    // 匹配规则 - 优先匹配备注，其次匹配交易对方和商品
-    for (const rule of categoryRules) {
-      if (rule.keywords.some(keyword => remark.includes(keyword) || counterparty.includes(keyword) || product.includes(keyword))) {
-        category = rule.category
-        break
-      }
-    }
-  } else {
-    // 收入分类映射规则
-    const incomeRules = [
-      { keywords: ['工资', '薪资', '薪酬', '公司'], category: '工资' },
-      { keywords: ['投资', '理财', '股票', '基金', '分红'], category: '投资收入' },
-      { keywords: ['稿费', '写作', '文章', '版税'], category: '稿费收入' },
-      { keywords: ['红包', '现金奖励'], category: '其他' },
-    ]
-
-    for (const rule of incomeRules) {
-      if (rule.keywords.some(keyword => remark.includes(keyword) || counterparty.includes(keyword) || product.includes(keyword))) {
-        category = rule.category
-        break
-      }
+  // 根据动态加载的配置进行匹配
+  // 按照 CATEGORIES 数组中的设定顺序进行排序，保证匹配的优先级（例如：饮食 优先于 日用品）
+  const matchedRules = dynamicCategoryKeywords.value
+    .filter(k => k.type === type)
+    .sort((a, b) => {
+      const indexA = CATEGORIES.indexOf(a.category as any)
+      const indexB = CATEGORIES.indexOf(b.category as any)
+      return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB)
+    })
+    
+  for (const rule of matchedRules) {
+    if (!rule.keywords || !Array.isArray(rule.keywords)) continue
+    
+    // 优先匹配备注，其次匹配交易对方和商品
+    if (rule.keywords.some(keyword => remark.includes(keyword) || counterparty.includes(keyword) || product.includes(keyword))) {
+      category = rule.category
+      break
     }
   }
 
@@ -677,10 +649,22 @@ const handleFileChange = async (event: Event) => {
   if (!file) return
 
   isProcessing.value = true
-  // 重置成员选择状态
+  // 重置成员识别状态（不重置当前选中的成员）
   detectedMemberName.value = ''
   suggestedMemberId.value = null
-  selectedMemberId.value = null
+
+  // 拉取最新的分类关键字配置
+  try {
+    const res = await authFetch('/api/category-keywords')
+    if (res.ok) {
+      const result = await res.json()
+      if (result.success && result.data) {
+        dynamicCategoryKeywords.value = result.data
+      }
+    }
+  } catch (e) {
+    console.error('获取分类关键字失败', e)
+  }
 
   try {
     let records: RecordData[] = []
@@ -774,7 +758,7 @@ const handleFileChange = async (event: Event) => {
 
     previewRecords.value = records
 
-    // 如果没有自动识别到成员,使用上次选择的成员
+    // 如果没有自动识别到成员，且当前未选择，并且有上次选择的记录，使用上次记录
     if (!selectedMemberId.value && lastSelectedMemberId.value) {
       const member = activeMembers.value.find(m => m.id === lastSelectedMemberId.value)
       if (member) {
@@ -984,6 +968,51 @@ const cancelMemberConfirm = () => {
           </span>
         </button>
       </div>
+    </div>
+
+    <!-- 提前在此处选择家庭成员 -->
+    <div v-if="activeMembers.length > 0" class="mb-6">
+      <label class="block text-sm font-semibold text-gray-700 mb-3">选择账单所属成员</label>
+      <div class="flex flex-wrap gap-2">
+        <button
+          @click="selectedMemberId = null"
+          :class="[
+            'px-4 py-2 rounded-xl text-sm font-medium transition-all b-solid b-2px',
+            selectedMemberId === null
+              ? 'bg-gray-700 text-white b-gray-700 shadow-md'
+              : 'bg-white text-gray-600 b-gray-200 hover:b-gray-400 hover:bg-gray-50'
+          ]"
+        >
+          家庭共同
+        </button>
+        <button
+          v-for="member in activeMembers"
+          :key="member.id"
+          @click="selectedMemberId = member.id || null"
+          :class="[
+            'px-4 py-2 rounded-xl text-sm font-medium transition-all b-solid b-2px flex items-center gap-2',
+            selectedMemberId === member.id
+              ? 'text-white shadow-md'
+              : 'bg-white hover:opacity-80'
+          ]"
+          :style="{
+            backgroundColor: selectedMemberId === member.id ? member.color : 'white',
+            borderColor: selectedMemberId === member.id ? member.color : '#e5e7eb',
+            color: selectedMemberId === member.id ? 'white' : member.color
+          }"
+        >
+          <span
+            class="w-5 h-5 rounded-full flex items-center justify-center text-xs text-white"
+            :style="{ backgroundColor: member.color }"
+          >
+            {{ member.name.charAt(0) }}
+          </span>
+          {{ member.name }}
+        </button>
+      </div>
+      <p class="mt-2 text-xs text-gray-400 flex items-center gap-1">
+        <Info :size="14" /> 支持自动从支付宝、微信账单识别成员
+      </p>
     </div>
 
     <!-- 上传按钮 -->
