@@ -1,6 +1,11 @@
 node_modules
 dist
-.wrangler
+.wrangler/*
+!.wrangler/state/
+.wrangler/state/*
+!.wrangler/state/v3/
+.wrangler/state/v3/*
+!.wrangler/state/v3/d1/
 .dev.vars
 .env
 *.log
