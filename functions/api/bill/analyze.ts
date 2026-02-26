@@ -84,7 +84,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             model: languageModel,
             schema: schema,
             system: systemPrompt,
-            messages: [userMessage]
+            messages: [userMessage],
+            maxTokens: 8192
         });
 
         // 分类映射：将AI返回的分类映射到系统标准分类
@@ -139,6 +140,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             '鞋子': '服饰',
             '服装': '服饰',
 
+            // 家电/家具相关
+            '家具': '家电/家具',
+            '家电': '家电/家具',
+            '大家电': '家电/家具',
+            '家居': '家电/家具',
+
             // 美妆护肤相关
             '化妆品': '美妆护肤',
             '护肤品': '美妆护肤',
@@ -178,7 +185,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         const validExpenseCategories = [
             '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
             '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗',
-            '通讯', '服饰', '还贷'
+            '通讯', '服饰', '还贷', '家电/家具'
         ];
         const validIncomeCategories = ['工资', '投资收入', '稿费收入', '其他'];
 

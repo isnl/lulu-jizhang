@@ -83,10 +83,15 @@ const triggerFileInput = () => {
   fileInput.value?.click()
 }
 
-// 判断是否为重复数据（支付宝/微信）
-const isDuplicateRecord = (record: RecordData): boolean => {
+// 判断是否为重复数据（基于文本特征简单判断，仅用作补充）
+const isTextDuplicate = (record: RecordData): boolean => {
   const remark = record.remark || ''
-  return remark.includes('支付宝-') || remark.includes('财付通-')
+  return remark.includes('支付宝-') || 
+         remark.includes('财付通-') || 
+         remark.includes('微信支付') || 
+         remark.includes('快捷支付') || 
+         remark.includes('扫码') || 
+         remark.includes('美团订单')
 }
 
 // 从微信账单中提取昵称
@@ -113,13 +118,97 @@ const extractWechatNickname = (rows: any[][]): string => {
   return ''
 }
 
-// 分类数据
-const classifyRecords = (records: RecordData[]) => {
+// 异步分类数据，结合数据库数据进行比对
+const classifyRecordsAsync = async (records: RecordData[]) => {
   validRecords.value = []
   duplicateRecords.value = []
 
+  if (records.length === 0) return
+
+  // 1. 获取导入数据的日期区间
+  let minDate = records[0].date
+  let maxDate = records[0].date
+  for (const r of records) {
+    if (r.date < minDate) minDate = r.date
+    if (r.date > maxDate) maxDate = r.date
+  }
+
+  // 前后宽松增加2天作为查询范围
+  const dMin = new Date(minDate)
+  dMin.setDate(dMin.getDate() - 2)
+  const minDateStr = dMin.toISOString().split('T')[0]
+
+  const dMax = new Date(maxDate)
+  dMax.setDate(dMax.getDate() + 2)
+  const maxDateStr = dMax.toISOString().split('T')[0]
+
+  let existingRecords: any[] = []
+  try {
+    const memberIdParam = selectedMemberId.value === null ? 'family' : selectedMemberId.value
+    const res = await authFetch(`/api/records/list?startDate=${minDateStr}&endDate=${maxDateStr}&memberId=${memberIdParam}`)
+    if (res.ok) {
+      const result = await res.json()
+      if (result.success && Array.isArray(result.data)) {
+        existingRecords = result.data
+      }
+    }
+  } catch (e) {
+    console.error('获取历史记录进行核对失败:', e)
+  }
+
+  // 2. 遍历比对数据
   for (const record of records) {
-    if (isDuplicateRecord(record)) {
+    // a. 如果是传统银行/信用卡账单，先通过文本过滤明显的第三方渠道代扣
+    if (billType.value !== 'wechat' && billType.value !== 'alipay') {
+      if (isTextDuplicate(record)) {
+        duplicateRecords.value.push(record)
+        continue
+      }
+    }
+
+    // b. 数据库精准对比
+    let isDbDup = false
+    const rTime = new Date(record.date).getTime()
+    
+    for (const existing of existingRecords) {
+      // 收支类型相同，并且金额完全一致（允许0.01误差）
+      if (existing.type === record.type && Math.abs(existing.amount - record.amount) < 0.01) {
+        const eTime = new Date(existing.date).getTime()
+        const diffDays = Math.abs(rTime - eTime) / (1000 * 3600 * 24)
+        
+        // 要求日期在1天误差之内
+        if (diffDays <= 1) {
+           const isIntegerAmount = Number.isInteger(record.amount)
+           const remarkA = record.remark || ''
+           const remarkB = existing.remark || ''
+           
+           // 清理特殊字符和标点再比较
+           const cleanA = remarkA.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '')
+           const cleanB = remarkB.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '')
+           
+           let overlap = false
+           if (cleanA && cleanB) {
+              if (cleanA.length >= 2) {
+                 for(let i = 0; i < cleanA.length - 1; i++) {
+                    const bigram = cleanA.substring(i, i+2)
+                    if (cleanB.includes(bigram)) { overlap = true; break; }
+                 }
+              } else {
+                 if (cleanB.includes(cleanA)) overlap = true
+              }
+           }
+
+           // 条件：如果是带着小数的高精度金额(如18.52)，金额一致+日期一致 即判定重复
+           // 如果是整数(如20.00)，为了防误判，要求至少部分备注文字重叠
+           if (overlap || !isIntegerAmount) {
+              isDbDup = true
+              break
+           }
+        }
+      }
+    }
+
+    if (isDbDup) {
       duplicateRecords.value.push(record)
     } else {
       validRecords.value.push(record)
@@ -284,12 +373,12 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
   return { records, accountName }
 }
 
-// 智能分类映射(微信和支付宝共用)
-const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string, remark: string = '', transactionType: string = ''): string => {
-  let category = type === '支出' ? '日用品' : '其他' // Default
+// 智能分类映射(微信和支付宝共用，并在京东和银行中作为最高优先级)
+const smartCategoryMapping = (type: '支出' | '收入', counterparty: string, product: string, remark: string = '', transactionType: string = '', fallbackCategory?: string): string => {
+  let category = fallbackCategory || (type === '支出' ? '日用品' : '其他') // Default
 
-  // 优先判断人情类交易(转账、红包等) - 不区分收支
-  const relationshipKeywords = ['转账', '红包', '发红包', '微信红包', '赞赏码', '收款码', '赞赏']
+  // 优先判断人情类交易(红包等) - 不区分收支
+  const relationshipKeywords = ['红包', '发红包', '微信红包', '赞赏码', '收款码', '赞赏']
   if (relationshipKeywords.some(keyword => 
     transactionType.includes(keyword) || 
     counterparty.includes(keyword) || 
@@ -342,21 +431,23 @@ const mapJDCategory = (type: '支出' | '收入', jdCategory: string, merchant: 
       '生活服务': '日用品',
       '休闲娱乐': '娱乐',
       '鞋服箱包': '服饰',
-    }
-
-    // 优先使用京东分类
-    if (jdCategory && categoryMapping[jdCategory]) {
-      return categoryMapping[jdCategory]
+      '家具家装': '家电/家具',
+      '家用电器': '家电/家具',
     }
 
     // 如果是"其他网购"或"网购"，尝试从商户/商品描述智能匹配
-    return smartCategoryMapping(type, merchant, description, '')
+    let fallbackCategory = '日用品'
+    if (jdCategory && categoryMapping[jdCategory]) {
+      fallbackCategory = categoryMapping[jdCategory]
+    }
+    return smartCategoryMapping(type, merchant, description, '', '', fallbackCategory)
   } else {
     // 收入分类
+    let fallbackCategory = '其他'
     if (merchant.includes('佣金') || description.includes('佣金')) {
-      return '其他'
+      fallbackCategory = '其他'
     }
-    return '其他'
+    return smartCategoryMapping(type, merchant, description, '', '', fallbackCategory)
   }
 }
 
@@ -443,59 +534,57 @@ const parseJDWalletBill = (rows: any[][]): RecordData[] => {
 
 // 银行流水分类映射
 const mapBankCategory = (type: '支出' | '收入', summary: string, counterName: string): string => {
+  let defaultCategory = '其他';
   if (type === '支出') {
     // 保险类 - 优先判断
     if (counterName.includes('保险')) {
-      return '保险'
+      defaultCategory = '保险'
     }
-
     // 网购类
-    if (summary.includes('拼多多') || summary.includes('抖音') ||
+    else if (summary.includes('拼多多') || summary.includes('抖音') ||
         summary.includes('京东') || summary.includes('淘宝') ||
         summary.includes('天猫') || summary.includes('唯品会')) {
-      return '日用品'
+      defaultCategory = '日用品'
     }
-
     // 通讯类
-    if (counterName.includes('移动') || counterName.includes('联通') ||
+    else if (counterName.includes('移动') || counterName.includes('联通') ||
         counterName.includes('电信') || summary.includes('话费')) {
-      return '通讯'
+      defaultCategory = '通讯'
     }
-
     // 交通类
-    if (counterName.includes('加油') || counterName.includes('石油') ||
+    else if (counterName.includes('加油') || counterName.includes('石油') ||
         counterName.includes('石化') || summary.includes('ETC')) {
-      return '交通'
+      defaultCategory = '交通'
     }
-
     // 水电燃气
-    if (counterName.includes('电力') || counterName.includes('燃气') ||
+    else if (counterName.includes('电力') || counterName.includes('燃气') ||
         counterName.includes('水务') || counterName.includes('供暖')) {
-      return '生活费'
+      defaultCategory = '生活费'
+    } else {
+      defaultCategory = '日用品' // 默认
     }
-
-    return '日用品' // 默认
   } else {
     // 收入分类
     if (summary.includes('工资') || summary.includes('薪') ||
         counterName.includes('人力') || counterName.includes('薪酬')) {
-      return '工资'
+      defaultCategory = '工资'
     }
-
     // 政府补贴/退税
-    if (counterName.includes('预算') || counterName.includes('财政') ||
+    else if (counterName.includes('预算') || counterName.includes('财政') ||
         counterName.includes('税务') || summary.includes('退税')) {
-      return '其他'
+      defaultCategory = '其他'
     }
-
     // 投资收益
-    if (counterName.includes('基金') || counterName.includes('证券') ||
+    else if (counterName.includes('基金') || counterName.includes('证券') ||
         counterName.includes('理财') || summary.includes('利息')) {
-      return '投资收入'
+      defaultCategory = '投资收入'
+    } else {
+      defaultCategory = '其他'
     }
-
-    return '其他'
   }
+  
+  // 最终通过智能重匹配机制，用自定义关键词覆盖（若有）
+  return smartCategoryMapping(type, counterName, summary, '', '', defaultCategory)
 }
 
 // 解析银行流水（中信银行格式）
@@ -766,14 +855,8 @@ const handleFileChange = async (event: Event) => {
       }
     }
 
-    // 如果是信用卡账单，进行数据分类
-    if (billType.value === 'credit') {
-      classifyRecords(records)
-    } else {
-      // 微信和支付宝账单不需要分类，全部作为有效数据
-      validRecords.value = records
-      duplicateRecords.value = []
-    }
+    // 进行数据分类及与数据库查重（适用于所有账单）
+    await classifyRecordsAsync(records)
 
     showPreview.value = true
 
@@ -800,7 +883,7 @@ const confirmImport = async () => {
     isProcessing.value = true
     try {
         // 只导入有效数据（validRecords），不导入重复数据
-        const dataToImport = billType.value === 'credit' ? validRecords.value : previewRecords.value
+        const dataToImport = validRecords.value
 
         const response = await authFetch('/api/records/batch', {
             method: 'POST',
@@ -1129,12 +1212,12 @@ const cancelMemberConfirm = () => {
         </div>
       </div>
 
-      <!-- 信用卡账单：分类显示 -->
-      <template v-if="billType === 'credit'">
+      <!-- 统一结果显示 -->
+      <template v-if="true">
         <!-- 统计信息 -->
         <div class="mb-4 px-4 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg b-solid b-1px b-emerald-200">
           <p class="text-sm font-semibold text-emerald-800">
-            共找到 {{ previewRecords.length }} 条记录，其中需导入 {{ validRecords.length }} 条，重复数据 {{ duplicateRecords.length }} 条
+            共找到 {{ previewRecords.length }} 条记录，其中需导入 {{ validRecords.length }} 条，检测到与历史重复 {{ duplicateRecords.length }} 条
           </p>
         </div>
 
@@ -1188,8 +1271,8 @@ const cancelMemberConfirm = () => {
         <!-- 2. 重复数据 -->
         <div v-if="duplicateRecords.length > 0">
           <div class="mb-3 px-4 py-2 bg-orange-50 rounded-lg b-solid b-1px b-orange-200">
-            <h3 class="text-sm font-bold text-orange-800">2. 与支付宝/微信重复数据 ({{ duplicateRecords.length }} 条)</h3>
-            <p class="text-xs text-orange-600 mt-1">以下数据不会被导入</p>
+            <h3 class="text-sm font-bold text-orange-800">2. 检测到的重复数据 ({{ duplicateRecords.length }} 条)</h3>
+            <p class="text-xs text-orange-600 mt-1">与系统历史记录或其他渠道比对存在重复风险，这些数据不会被导入</p>
           </div>
           <div class="overflow-x-auto max-h-[300px] overflow-y-auto">
             <table class="w-full text-sm">
@@ -1228,53 +1311,6 @@ const cancelMemberConfirm = () => {
         </div>
       </template>
 
-      <!-- 微信/支付宝账单：原有显示方式 -->
-      <template v-else>
-        <div class="mb-4 px-4 py-3 bg-emerald-50 rounded-lg b-solid b-1px b-emerald-200">
-          <p class="text-sm font-semibold text-emerald-800">
-            共找到 {{ previewRecords.length }} 条有效记录
-          </p>
-        </div>
-
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-50 sticky top-0">
-              <tr>
-                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
-                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
-                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
-                <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
-                <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-              <tr v-for="(record, idx) in previewRecords" :key="idx" class="hover:bg-gray-50 transition-colors">
-                <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
-                <td class="px-4 py-3">
-                  <span
-                    :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
-                  >
-                    {{ record.type }}
-                  </span>
-                </td>
-                <td class="px-4 py-3">
-                  <CustomSelect
-                    v-model="record.category"
-                    :options="CATEGORIES"
-                  />
-                </td>
-                <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
-                  {{ record.amount.toFixed(2) }}
-                </td>
-                <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
-                  {{ record.remark }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </template>
-
       <template #footer>
         <div class="flex justify-end gap-3">
           <button
@@ -1289,8 +1325,7 @@ const cancelMemberConfirm = () => {
             :disabled="isProcessing"
           >
             <Loader2 v-if="isProcessing" :size="18" class="animate-spin" />
-            <span v-if="billType === 'credit'">确认导入 ({{ validRecords.length }} 条)</span>
-            <span v-else>确认导入</span>
+            <span>确认导入 ({{ validRecords.length }} 条)</span>
           </button>
         </div>
       </template>
