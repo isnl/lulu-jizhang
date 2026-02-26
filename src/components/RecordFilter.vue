@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   recordsLoaded: [records: RecordData[]]
+  filterChanged: [filter: { startMonth: string, endMonth: string, memberId: string }]
   error: [message: string]
   loading: [isLoading: boolean]
   showRecordForm: []
@@ -63,6 +64,7 @@ const loadRecords = async () => {
     }
 
     emit('recordsLoaded', result)
+    emit('filterChanged', { startMonth: startMonth.value, endMonth: endMonth.value, memberId: String(selectedMemberId.value) })
   } catch (error) {
     emit('error', error instanceof Error ? error.message : '获取记录时出错')
     emit('recordsLoaded', [])

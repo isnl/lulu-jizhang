@@ -51,7 +51,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             name: row.name,
             wechatNickname: row.wechat_nickname,
             color: row.color,
-            isActive: row.is_active === 1,
+            isActive: row.is_active !== 0,
             createdAt: row.created_at,
             updatedAt: row.updated_at
         }));

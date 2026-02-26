@@ -50,7 +50,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
                 name: member.name,
                 wechatNickname: member.wechat_nickname,
                 color: member.color,
-                isActive: member.is_active === 1,
+                isActive: member.is_active !== 0,
                 createdAt: member.created_at,
                 updatedAt: member.updated_at
             }
@@ -167,7 +167,7 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
                 name: updated!.name,
                 wechatNickname: updated!.wechat_nickname,
                 color: updated!.color,
-                isActive: updated!.is_active === 1,
+                isActive: updated!.is_active !== 0,
                 createdAt: updated!.created_at,
                 updatedAt: updated!.updated_at
             }

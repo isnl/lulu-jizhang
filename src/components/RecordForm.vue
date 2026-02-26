@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { PlusCircle, DollarSign, Calendar as CalendarIcon, FileText } from 'lucide-vue-next'
+import { PlusCircle, DollarSign, Calendar as CalendarIcon, FileText, User } from 'lucide-vue-next'
 import CustomSelect from './ui/CustomSelect.vue'
 import { apiConfig } from '../config/api'
 import { authFetch } from '../utils/auth'
 import { RECORD_TYPES, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types'
+import type { Member } from '../types'
+
+const props = defineProps<{
+  members?: Member[]
+}>()
+
+const activeMembers = computed(() => {
+  return props.members?.filter(m => m.isActive) || []
+})
 
 const emit = defineEmits<{
   recordAdded: []
@@ -16,7 +25,8 @@ const formData = ref({
   category: '生活费',
   amount: '',
   date: new Date().toISOString().split('T')[0],
-  remark: ''
+  remark: '',
+  memberId: null as number | null
 })
 
 // 根据类型动态显示分类
@@ -72,7 +82,8 @@ const handleSubmit = async () => {
       category: '生活费',
       amount: '',
       date: new Date().toISOString().split('T')[0],
-      remark: ''
+      remark: '',
+      memberId: null
     }
 
     emit('recordAdded')
@@ -103,6 +114,29 @@ const handleSubmit = async () => {
           v-model="formData.category"
           :options="availableCategories"
         />
+      </div>
+
+      <div>
+        <label class="block mb-2 font-semibold text-gray-700 text-sm flex items-center gap-2">
+          <User :size="16" class="text-emerald-600" />
+          所属人员 ({{ members?.length || 0 }}个)
+        </label>
+        <div class="relative">
+          <select
+            v-model="formData.memberId"
+            class="w-full px-4 py-2.5 bg-white b-solid b-2px b-gray-300 rounded-lg focus:outline-none focus:b-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all appearance-none cursor-pointer"
+          >
+            <option :value="null">家庭共有</option>
+            <option v-for="member in activeMembers" :key="member.id" :value="member.id">
+              {{ member.name }}
+            </option>
+          </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </div>
       </div>
 
       <div>

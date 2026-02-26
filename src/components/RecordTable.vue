@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { TrendingDown, TrendingUp, BarChart3, Inbox, Loader2, Wallet } from 'lucide-vue-next'
-import type { RecordData } from '../types'
+import { TrendingDown, TrendingUp, BarChart3, Inbox, Loader2, Wallet, FileText } from 'lucide-vue-next'
+import type { RecordData, Member } from '../types'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types'
+import Modal from './ui/Modal.vue'
+import { authFetch } from '../utils/auth'
 
 const props = defineProps<{
   records: RecordData[]
   loading: boolean
+  currentFilter?: { startMonth: string, endMonth: string, memberId: string }
+  members?: Member[]
+}>()
+
+const emit = defineEmits<{
+  recordDeleted: []
+  recordUpdated: []
 }>()
 
 // Tab切换状态
@@ -108,6 +117,139 @@ const getSubtotal = (record: any, type: 'expense' | 'income') => {
     subtotal += record[cat] || 0
   })
   return subtotal
+}
+
+// 明细状态
+const showDetailsModal = ref(false)
+const detailsLoading = ref(false)
+const detailsData = ref<any[]>([])
+const detailsTitle = ref('')
+
+// 获取明细数据
+const fetchDetails = async (record: any, category: string, type: '支出' | '收入') => {
+  let startDate = ''
+  let endDate = ''
+  if (record.type === 'daily') {
+    startDate = record.date
+    endDate = record.date
+  } else if (record.type === 'monthly') {
+    startDate = `${record.date}-01`
+    const nextMonth = new Date(startDate)
+    nextMonth.setMonth(nextMonth.getMonth() + 1)
+    nextMonth.setDate(0) // 当月最后一天
+    endDate = nextMonth.toISOString().split('T')[0]
+  }
+
+  const memberId = props.currentFilter?.memberId || 'all'
+
+  try {
+    detailsLoading.value = true
+    showDetailsModal.value = true
+    detailsTitle.value = `${record.date} ${category} ${type}明细`
+    detailsData.value = []
+
+    let url = `/api/records/list?startDate=${startDate}&endDate=${endDate}&type=${type}&category=${encodeURIComponent(category)}&memberId=${memberId}`
+    const response = await authFetch(url)
+    const result = await response.json()
+    if (result.success) {
+      detailsData.value = result.data.map((item: any) => ({ 
+        ...item, 
+        deleteLoading: false,
+        isEditingCategory: false,
+        editCategoryValue: item.category
+      }))
+    } else {
+      console.error(result.error)
+    }
+  } catch (err) {
+    console.error(err)
+  } finally {
+    detailsLoading.value = false
+  }
+}
+
+const getMemberName = (id: number | null) => {
+  if (!id || !props.members) return '家庭'
+  const member = props.members.find(m => m.id === id)
+  return member ? member.name : '未知'
+}
+
+const deleteRecord = async (id: number) => {
+  if (!confirm('确定要删除这条记录吗？删除后不可恢复。')) return
+
+  const itemIndex = detailsData.value.findIndex(item => item.id === id)
+  if (itemIndex > -1) {
+    detailsData.value[itemIndex].deleteLoading = true
+  }
+
+  try {
+    const response = await authFetch(`/api/records/${id}`, {
+      method: 'DELETE'
+    })
+    const result = await response.json()
+    
+    if (result.success) {
+      // 从列表中移除
+      detailsData.value = detailsData.value.filter(item => item.id !== id)
+      // 通知父级数据已变更，需要刷新主统计表
+      emit('recordDeleted')
+      
+      // 如果明细为空了，可以关闭弹窗
+      if (detailsData.value.length === 0) {
+        showDetailsModal.value = false
+      }
+    } else {
+      alert(result.error || '删除失败')
+    }
+  } catch (error) {
+    console.error('删除请求出错:', error)
+    alert('删除记录时发生错误')
+  } finally {
+    const idx = detailsData.value.findIndex(item => item.id === id)
+    if (idx > -1) {
+      detailsData.value[idx].deleteLoading = false
+    }
+  }
+}
+
+const updateCategory = async (item: any) => {
+  if (item.editCategoryValue === item.category) {
+    item.isEditingCategory = false
+    return
+  }
+
+  try {
+    const response = await authFetch(`/api/records/${item.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ category: item.editCategoryValue })
+    })
+    const result = await response.json()
+
+    if (result.success) {
+      // 从当前分类明细列表中移除（因为分类已经变了，不属于当前分类了）
+      detailsData.value = detailsData.value.filter(d => d.id !== item.id)
+      
+      // 通知父级数据已变更，需要刷新主统计表
+      emit('recordUpdated')
+
+      // 如果明细为空了，关闭弹窗
+      if (detailsData.value.length === 0) {
+        showDetailsModal.value = false
+      }
+    } else {
+      alert(result.error || '更新失败')
+      item.editCategoryValue = item.category // 恢复原值
+    }
+  } catch (error) {
+    console.error('更新请求出错:', error)
+    alert('更新分类时发生错误')
+    item.editCategoryValue = item.category
+  } finally {
+    item.isEditingCategory = false
+  }
 }
 </script>
 
@@ -240,11 +382,13 @@ const getSubtotal = (record: any, type: 'expense' | 'income') => {
                   <td
                     v-for="category in EXPENSE_CATEGORIES"
                     :key="category"
-                    class="px-3 py-2 text-right b-r-solid b-r-1px b-r-gray-200 whitespace-nowrap text-xs"
+                    class="px-3 py-2 text-right b-r-solid b-r-1px b-r-gray-200 whitespace-nowrap text-xs transition-colors"
                     :class="{
-                      'font-semibold text-gray-900': getCellValue(record, category),
+                      'font-semibold text-gray-900 cursor-pointer hover:bg-red-100 hover:text-red-700': getCellValue(record, category),
                       'text-gray-300': !getCellValue(record, category)
                     }"
+                    @click="getCellValue(record, category) ? fetchDetails(record, category, '支出') : null"
+                    :title="getCellValue(record, category) ? '点击查看明细' : ''"
                   >
                     {{ getCellValue(record, category) }}
                   </td>
@@ -307,11 +451,13 @@ const getSubtotal = (record: any, type: 'expense' | 'income') => {
                   <td
                     v-for="category in INCOME_CATEGORIES"
                     :key="category"
-                    class="px-3 py-2 text-right b-r-solid b-r-1px b-r-gray-200 whitespace-nowrap text-xs"
+                    class="px-3 py-2 text-right b-r-solid b-r-1px b-r-gray-200 whitespace-nowrap text-xs transition-colors"
                     :class="{
-                      'font-semibold text-gray-900': getCellValue(record, category),
+                      'font-semibold text-gray-900 cursor-pointer hover:bg-emerald-100 hover:text-emerald-700': getCellValue(record, category),
                       'text-gray-300': !getCellValue(record, category)
                     }"
+                    @click="getCellValue(record, category) ? fetchDetails(record, category, '收入') : null"
+                    :title="getCellValue(record, category) ? '点击查看明细' : ''"
                   >
                     {{ getCellValue(record, category) }}
                   </td>
@@ -342,6 +488,98 @@ const getSubtotal = (record: any, type: 'expense' | 'income') => {
         </div>
       </div>
     </div>
+
+    <!-- 明细弹窗 -->
+    <Modal
+      :show="showDetailsModal"
+      :title="detailsTitle"
+      size="lg"
+      @close="showDetailsModal = false"
+    >
+      <div v-if="detailsLoading" class="flex flex-col items-center justify-center py-16">
+        <Loader2 :size="48" class="text-emerald-500 animate-spin" />
+        <p class="mt-4 text-gray-600 font-medium">加载明细中...</p>
+      </div>
+      <div v-else-if="detailsData.length === 0" class="text-center py-16">
+        <FileText :size="64" class="mx-auto text-gray-300 mb-4" />
+        <p class="text-gray-500 text-lg">暂无明细数据</p>
+      </div>
+      <div v-else class="max-h-[60vh] overflow-y-auto custom-scrollbar">
+        <div class="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-gray-50 text-gray-600">
+                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">日期</th>
+                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">分类</th>
+                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">成员</th>
+                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">备注</th>
+                <th class="px-4 py-2 text-right font-medium border-b border-gray-200">金额</th>
+                <th class="px-4 py-2 text-center font-medium border-b border-gray-200">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(item, idx) in detailsData"
+                :key="item.id || idx"
+                class="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                :class="{ 'bg-gray-50/50': idx % 2 === 0, 'opacity-50': item.deleteLoading }"
+              >
+                <td class="px-4 py-2 text-gray-800 whitespace-nowrap">{{ item.date }}</td>
+                <td class="px-4 py-2 whitespace-nowrap">
+                  <div v-if="item.isEditingCategory" class="flex items-center gap-1">
+                    <select
+                      v-model="item.editCategoryValue"
+                      class="px-2 py-1 text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option v-for="cat in (item.type === '支出' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES)" :key="cat" :value="cat">
+                        {{ cat }}
+                      </option>
+                    </select>
+                    <button @click="updateCategory(item)" class="text-emerald-600 hover:text-emerald-800 p-0.5">确认</button>
+                    <button @click="item.isEditingCategory = false; item.editCategoryValue = item.category" class="text-gray-400 hover:text-gray-600 p-0.5">取消</button>
+                  </div>
+                  <div v-else class="flex items-center gap-2 group">
+                    <span class="text-sm font-medium text-gray-700">{{ item.category }}</span>
+                    <button
+                      @click="item.isEditingCategory = true"
+                      class="text-xs text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity hover:underline"
+                    >
+                      修改
+                    </button>
+                  </div>
+                </td>
+                <td class="px-4 py-2">
+                  <span class="px-2 py-0.5 rounded text-xs border border-gray-200" :style="item.memberId ? 'background: #f3f4f6' : 'background: #e5e7eb; color: #4b5563'">
+                    {{ getMemberName(item.memberId) }}
+                  </span>
+                </td>
+                <td class="px-4 py-2 text-gray-600" :title="item.remark">{{ item.remark || '-' }}</td>
+                <td class="px-4 py-2 text-right font-semibold whitespace-nowrap" :class="item.type === '支出' ? 'text-red-600' : 'text-emerald-600'">
+                  {{ item.amount?.toFixed(2) }}
+                </td>
+                <td class="px-4 py-2 text-center whitespace-nowrap">
+                  <button
+                    @click="deleteRecord(item.id)"
+                    :disabled="item.deleteLoading"
+                    class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors disabled:opacity-50"
+                  >
+                    {{ item.deleteLoading ? '删除中...' : '删除' }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="flex justify-end mt-4 pt-4 border-t border-gray-200">
+        <button
+          @click="showDetailsModal = false"
+          class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
+        >
+          关闭
+        </button>
+      </div>
+    </Modal>
   </div>
 </template>
 

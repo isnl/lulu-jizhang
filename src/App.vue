@@ -24,6 +24,8 @@ const showMemberModal = ref(false)
 const showApiTokenModal = ref(false)
 const showCategoryKeywordModal = ref(false)
 
+const currentFilter = ref({ startMonth: '', endMonth: '', memberId: 'all' })
+
 // 组件引用
 const recordFilterRef = ref<InstanceType<typeof RecordFilter> | null>(null)
 
@@ -80,6 +82,16 @@ const showMessage = (text: string, type: 'success' | 'error' | 'info') => {
 
 const handleRecordAdded = () => {
   showMessage('记录添加成功', 'success')
+  recordFilterRef.value?.loadRecords()
+}
+
+const handleRecordDeleted = () => {
+  showMessage('记录删除成功', 'success')
+  recordFilterRef.value?.loadRecords()
+}
+
+const handleRecordUpdated = () => {
+  showMessage('记录分类修改成功', 'success')
   recordFilterRef.value?.loadRecords()
 }
 
@@ -187,6 +199,7 @@ const handleSuccess = (msg: string) => {
           @records-loaded="handleRecordsLoaded"
           @error="handleError"
           @loading="loading = $event"
+          @filterChanged="currentFilter = $event"
           @show-record-form="showRecordModal = true"
           @show-import-form="showImportModal = true"
           @show-member-management="showMemberModal = true"
@@ -199,6 +212,10 @@ const handleSuccess = (msg: string) => {
       <RecordTable
         :records="records"
         :loading="loading"
+        :current-filter="currentFilter"
+        :members="members"
+        @record-deleted="handleRecordDeleted"
+        @record-updated="handleRecordUpdated"
       />
     </main>
 
@@ -214,6 +231,7 @@ const handleSuccess = (msg: string) => {
       @close="showRecordModal = false"
     >
       <RecordForm
+        :members="members"
         @record-added="() => { handleRecordAdded(); showRecordModal = false }"
         @error="handleError"
       />
