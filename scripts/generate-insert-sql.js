@@ -1,11 +1,17 @@
 // 生成 INSERT SQL 语句
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const EXPORT_DIR = './data-export';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const EXPORT_DIR = path.join(__dirname, 'data-export');
 
 function escapeSQL(value) {
     if (value === null || value === undefined) return 'NULL';
+    // wrangler 导出的 JSON 中 null 有时会被序列化为字符串 "null"，需要额外处理
+    if (value === 'null' || value === 'NULL') return 'NULL';
     if (typeof value === 'number') return value;
     return `'${String(value).replace(/'/g, "''")}'`;
 }
@@ -13,9 +19,12 @@ function escapeSQL(value) {
 function generateInsertSQL(tableName, data, columns) {
     if (!data || data.length === 0) return '';
 
-    const lines = data.map(row => {
+    // 加时间戳注释，避免 Cloudflare D1 缓存文件（"File already uploaded"）
+    const lines = [`-- Generated at ${new Date().toISOString()} | ${tableName} | ${data.length} rows`];
+
+    data.forEach(row => {
         const values = columns.map(col => escapeSQL(row[col]));
-        return `INSERT OR IGNORE INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`;
+        lines.push(`INSERT OR REPLACE INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`);
     });
 
     return lines.join('\n');

@@ -23,7 +23,7 @@ npx wrangler d1 execute $DB_NAME --local --command "SELECT * FROM records" --jso
 
 # 3. 生成 SQL 插入语句
 echo "生成 SQL 文件..."
-node scripts/generate-insert-sql.js
+node generate-insert-sql.js
 
 # 4. 导入到远程
 echo "导入 members 到远程..."
