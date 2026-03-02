@@ -105,7 +105,7 @@ const selectQuickDate = (type: 'current' | 'last' | 'next') => {
     <button
       type="button"
       @click="isOpen = !isOpen"
-      class="w-full px-3 py-1.5 bg-white b-solid b-1px b-gray-300 rounded-lg flex items-center justify-between transition-all hover:b-emerald-400 focus:outline-none focus:b-emerald-500 focus:ring-1 focus:ring-emerald-200 text-sm"
+      class="w-full h-9 px-3 bg-white b-solid b-1px b-gray-300 rounded-lg flex items-center justify-between transition-all hover:b-emerald-400 focus:outline-none focus:b-emerald-500 focus:ring-1 focus:ring-emerald-200 text-sm"
     >
       <span class="text-gray-700 text-sm">{{ displayValue }}</span>
       <ChevronDown
@@ -129,7 +129,7 @@ const selectQuickDate = (type: 'current' | 'last' | 'next') => {
             <button
               type="button"
               @click="selectQuickDate('last')"
-              class="flex-1 px-2 py-1 text-xs rounded transition-colors b-solid b-1px b-gray-200"
+              class="flex-1 h-8 px-2 text-xs rounded transition-colors b-solid b-1px b-gray-200"
               style="background: white !important; color: #374151 !important;"
               @mouseenter="$event.target.style.background = '#ecfdf5'; $event.target.style.color = '#059669'"
               @mouseleave="$event.target.style.background = 'white'; $event.target.style.color = '#374151'"
@@ -139,7 +139,7 @@ const selectQuickDate = (type: 'current' | 'last' | 'next') => {
             <button
               type="button"
               @click="selectQuickDate('current')"
-              class="flex-1 px-2 py-1 text-xs rounded transition-colors b-solid b-1px b-gray-200"
+              class="flex-1 h-8 px-2 text-xs rounded transition-colors b-solid b-1px b-gray-200"
               style="background: white !important; color: #374151 !important;"
               @mouseenter="$event.target.style.background = '#ecfdf5'; $event.target.style.color = '#059669'"
               @mouseleave="$event.target.style.background = 'white'; $event.target.style.color = '#374151'"
@@ -149,7 +149,7 @@ const selectQuickDate = (type: 'current' | 'last' | 'next') => {
             <button
               type="button"
               @click="selectQuickDate('next')"
-              class="flex-1 px-2 py-1 text-xs rounded transition-colors b-solid b-1px b-gray-200"
+              class="flex-1 h-8 px-2 text-xs rounded transition-colors b-solid b-1px b-gray-200"
               style="background: white !important; color: #374151 !important;"
               @mouseenter="$event.target.style.background = '#ecfdf5'; $event.target.style.color = '#059669'"
               @mouseleave="$event.target.style.background = 'white'; $event.target.style.color = '#374151'"

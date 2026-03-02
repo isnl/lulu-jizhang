@@ -214,12 +214,12 @@ defineExpose({
         v-for="member in members"
         :key="member.id"
         class="relative p-4 bg-white rounded-xl b-solid b-2px shadow-sm hover:shadow-md transition-all group"
-        :style="{ borderColor: member.color }"
+        :style="{ borderColor: member.color || '#64748b' }"
       >
         <!-- 成员头像/首字母 -->
         <div
           class="w-12 h-12 rounded-full flex items-center justify-center text-white text-xl font-bold mx-auto mb-2"
-          :style="{ backgroundColor: member.color }"
+          :style="{ backgroundColor: member.color || '#64748b' }"
         >
           {{ member.name.charAt(0) }}
         </div>

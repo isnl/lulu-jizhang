@@ -1079,14 +1079,14 @@ const cancelMemberConfirm = () => {
               : 'bg-white hover:opacity-80'
           ]"
           :style="{
-            backgroundColor: selectedMemberId === member.id ? member.color : 'white',
-            borderColor: selectedMemberId === member.id ? member.color : '#e5e7eb',
-            color: selectedMemberId === member.id ? 'white' : member.color
+            backgroundColor: selectedMemberId === member.id ? (member.color || '#64748b') : 'white',
+            borderColor: selectedMemberId === member.id ? (member.color || '#64748b') : '#e5e7eb',
+            color: selectedMemberId === member.id ? 'white' : (member.color || '#475569')
           }"
         >
           <span
             class="w-5 h-5 rounded-full flex items-center justify-center text-xs text-white"
-            :style="{ backgroundColor: member.color }"
+            :style="{ backgroundColor: member.color || '#64748b' }"
           >
             {{ member.name.charAt(0) }}
           </span>
@@ -1195,14 +1195,14 @@ const cancelMemberConfirm = () => {
                 : 'bg-white hover:opacity-80'
             ]"
             :style="{
-              backgroundColor: selectedMemberId === member.id ? member.color : 'white',
-              borderColor: member.color,
-              color: selectedMemberId === member.id ? 'white' : member.color
+              backgroundColor: selectedMemberId === member.id ? (member.color || '#64748b') : 'white',
+              borderColor: member.color || '#64748b',
+              color: selectedMemberId === member.id ? 'white' : (member.color || '#475569')
             }"
           >
             <span
               class="w-5 h-5 rounded-full flex items-center justify-center text-xs text-white"
-              :style="{ backgroundColor: member.color }"
+              :style="{ backgroundColor: member.color || '#64748b' }"
             >
               {{ member.name.charAt(0) }}
             </span>
@@ -1364,4 +1364,3 @@ const cancelMemberConfirm = () => {
     </Modal>
   </div>
 </template>
-

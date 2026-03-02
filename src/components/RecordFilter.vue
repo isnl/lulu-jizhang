@@ -2,9 +2,12 @@
 import { ref, onMounted, watch } from 'vue'
 import { Search, Plus, Upload, Users } from 'lucide-vue-next'
 import MonthPicker from './ui/MonthPicker.vue'
+import YearPicker from './ui/YearPicker.vue'
 import { apiConfig } from '../config/api'
 import { authFetch } from '../utils/auth'
 import type { RecordData, Member } from '../types'
+
+type PeriodType = 'year' | 'month'
 
 const props = defineProps<{
   members?: Member[]
@@ -20,30 +23,65 @@ const emit = defineEmits<{
   showMemberManagement: []
 }>()
 
+const periodType = ref<PeriodType>('year')
+const selectedYear = ref('')
 const startMonth = ref('')
 const endMonth = ref('')
-const selectedMemberId = ref<string>('all')  // 'all' | 'family' | 具体成员ID
+const selectedMemberId = ref<string>('all') // 'all' | 'family' | 具体成员ID
+
+const getDateRange = () => {
+  if (periodType.value === 'year') {
+    if (!/^\d{4}$/.test(selectedYear.value)) {
+      return null
+    }
+    return {
+      startMonth: `${selectedYear.value}-01`,
+      endMonth: `${selectedYear.value}-12`
+    }
+  }
+
+  return {
+    startMonth: startMonth.value,
+    endMonth: endMonth.value
+  }
+}
 
 onMounted(() => {
   const now = new Date()
   const currentMonth = now.toISOString().slice(0, 7)
   startMonth.value = currentMonth
   endMonth.value = currentMonth
+  selectedYear.value = String(now.getFullYear() - 1)
   loadRecords()
 })
 
-// 成员变化时重新加载数据
 watch(selectedMemberId, () => {
   loadRecords()
 })
 
+watch(periodType, () => {
+  loadRecords()
+})
+
+watch(selectedYear, () => {
+  if (periodType.value === 'year') {
+    loadRecords()
+  }
+})
+
 const loadRecords = async () => {
-  if (!startMonth.value || !endMonth.value) {
-    emit('error', '请选择开始和结束月份')
+  const range = getDateRange()
+  if (!range) {
+    emit('error', '请选择正确的年份')
     return
   }
 
-  if (startMonth.value > endMonth.value) {
+  if (!range.startMonth || !range.endMonth) {
+    emit('error', periodType.value === 'year' ? '请选择年份' : '请选择开始和结束月份')
+    return
+  }
+
+  if (periodType.value === 'month' && range.startMonth > range.endMonth) {
     emit('error', '开始月份不能晚于结束月份')
     return
   }
@@ -51,7 +89,7 @@ const loadRecords = async () => {
   try {
     emit('loading', true)
 
-    let url = `${apiConfig.endpoints.records}?startMonth=${startMonth.value}&endMonth=${endMonth.value}`
+    let url = `${apiConfig.endpoints.records}?startMonth=${range.startMonth}&endMonth=${range.endMonth}`
     if (selectedMemberId.value !== 'all') {
       url += `&memberId=${selectedMemberId.value}`
     }
@@ -64,7 +102,11 @@ const loadRecords = async () => {
     }
 
     emit('recordsLoaded', result)
-    emit('filterChanged', { startMonth: startMonth.value, endMonth: endMonth.value, memberId: String(selectedMemberId.value) })
+    emit('filterChanged', {
+      startMonth: range.startMonth,
+      endMonth: range.endMonth,
+      memberId: String(selectedMemberId.value)
+    })
   } catch (error) {
     emit('error', error instanceof Error ? error.message : '获取记录时出错')
     emit('recordsLoaded', [])
@@ -81,38 +123,63 @@ defineExpose({
 
 <template>
   <div class="w-full">
-    <!-- 单行紧凑布局 -->
     <div class="flex items-center gap-3 flex-wrap">
-      <!-- 日期筛选 -->
-      <form @submit.prevent="loadRecords" class="flex items-center gap-1.5">
-        <span class="text-xs font-medium text-gray-600">从</span>
-        <div class="w-32">
-          <MonthPicker v-model="startMonth" />
+      <form @submit.prevent="loadRecords" class="flex items-center gap-2 flex-wrap">
+        <div class="flex items-center gap-1 rounded-lg p-1 bg-gray-100">
+          <button
+            type="button"
+            @click="periodType = 'year'"
+            class="h-8 px-3 rounded-md text-sm font-medium transition-all"
+            :class="periodType === 'year' ? 'bg-white shadow text-emerald-700' : 'text-gray-600 hover:text-gray-800'"
+          >
+            按年份
+          </button>
+          <button
+            type="button"
+            @click="periodType = 'month'"
+            class="h-8 px-3 rounded-md text-sm font-medium transition-all"
+            :class="periodType === 'month' ? 'bg-white shadow text-emerald-700' : 'text-gray-600 hover:text-gray-800'"
+          >
+            按月份
+          </button>
         </div>
-        <span class="text-gray-400">→</span>
-        <div class="w-32">
-          <MonthPicker v-model="endMonth" />
-        </div>
+
+        <template v-if="periodType === 'year'">
+          <span class="text-sm font-medium text-gray-600">年份</span>
+          <div class="w-[136px] min-w-[136px]">
+            <YearPicker v-model="selectedYear" />
+          </div>
+        </template>
+
+        <template v-else>
+          <span class="text-sm font-medium text-gray-600">从</span>
+          <div class="w-[136px] min-w-[136px]">
+            <MonthPicker v-model="startMonth" />
+          </div>
+          <span class="text-gray-400">→</span>
+          <div class="w-[136px] min-w-[136px]">
+            <MonthPicker v-model="endMonth" />
+          </div>
+        </template>
+
         <button
           type="submit"
-          class="ml-1 px-3 py-1 font-medium rounded-md active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1 text-xs"
-          style="background: linear-gradient(to right, #3b82f6, #2563eb) !important; color: white !important;"
+          class="h-9 px-4 font-medium rounded-lg active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700"
         >
-          <Search :size="14" style="color: white !important;" />
-          <span style="color: white !important;">查询</span>
+          <Search :size="15" />
+          查询
         </button>
       </form>
 
-      <!-- 分隔线 -->
-      <div class="w-px h-5 bg-gray-300"></div>
+      <div class="w-px h-6 bg-gray-300"></div>
 
-      <!-- 成员筛选 -->
-      <div v-if="props.members && props.members.length > 0" class="flex items-center gap-1.5">
-        <span class="text-xs font-medium text-gray-500">成员:</span>
+      <div v-if="props.members && props.members.length > 0" class="flex items-center gap-1.5 flex-wrap">
+        <span class="text-sm font-medium text-gray-500">成员:</span>
         <button
           @click="selectedMemberId = 'all'"
+          type="button"
           :class="[
-            'px-2 py-0.5 rounded text-xs font-medium transition-all',
+            'h-8 px-3 rounded-md text-sm font-medium transition-all',
             selectedMemberId === 'all'
               ? 'bg-gray-700 text-white'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -122,8 +189,9 @@ defineExpose({
         </button>
         <button
           @click="selectedMemberId = 'family'"
+          type="button"
           :class="[
-            'px-2 py-0.5 rounded text-xs font-medium transition-all',
+            'h-8 px-3 rounded-md text-sm font-medium transition-all',
             selectedMemberId === 'family'
               ? 'bg-gray-700 text-white'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -135,54 +203,50 @@ defineExpose({
           v-for="member in props.members.filter(m => m.isActive)"
           :key="member.id"
           @click="selectedMemberId = String(member.id)"
+          type="button"
           :class="[
-            'px-2 py-0.5 rounded text-xs font-medium transition-all',
+            'h-8 px-3 rounded-md text-sm font-medium transition-all',
             selectedMemberId === String(member.id)
               ? 'text-white'
               : 'hover:opacity-80'
           ]"
           :style="{
-            backgroundColor: selectedMemberId === String(member.id) ? member.color : '#f3f4f6',
-            color: selectedMemberId === String(member.id) ? 'white' : member.color
+            backgroundColor: selectedMemberId === String(member.id) ? (member.color || '#64748b') : '#f3f4f6',
+            color: selectedMemberId === String(member.id) ? 'white' : (member.color || '#475569')
           }"
         >
           {{ member.name }}
         </button>
       </div>
 
-      <!-- 分隔线 -->
-      <div class="w-px h-5 bg-gray-300"></div>
+      <div class="w-px h-6 bg-gray-300"></div>
 
-      <!-- 操作按钮 -->
-      <div class="flex gap-1.5">
+      <div class="flex gap-2">
         <button
           @click="emit('showMemberManagement')"
           type="button"
-          class="px-2 py-1 font-medium rounded active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1 text-xs"
-          style="background: white !important; border: 1px solid #8b5cf6 !important; color: #7c3aed !important;"
+          class="h-9 px-3 font-medium rounded-lg active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 text-sm bg-white border border-violet-500 text-violet-700 hover:bg-violet-50"
         >
-          <Users :size="12" style="color: #7c3aed !important;" />
-          <span style="color: #7c3aed !important;">成员</span>
+          <Users :size="14" />
+          成员
         </button>
 
         <button
           @click="emit('showRecordForm')"
           type="button"
-          class="px-2 py-1 font-medium rounded active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1 text-xs"
-          style="background: linear-gradient(to right, #10b981, #14b8a6) !important; color: white !important;"
+          class="h-9 px-3 font-medium rounded-lg active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white"
         >
-          <Plus :size="12" style="color: white !important;" />
-          <span style="color: white !important;">记一笔</span>
+          <Plus :size="14" />
+          记一笔
         </button>
 
         <button
           @click="emit('showImportForm')"
           type="button"
-          class="px-2 py-1 font-medium rounded active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1 text-xs"
-          style="background: white !important; border: 1px solid #10b981 !important; color: #059669 !important;"
+          class="h-9 px-3 font-medium rounded-lg active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-1.5 text-sm bg-white border border-emerald-500 text-emerald-700 hover:bg-emerald-50"
         >
-          <Upload :size="12" style="color: #059669 !important;" />
-          <span style="color: #059669 !important;">导入</span>
+          <Upload :size="14" />
+          导入
         </button>
       </div>
     </div>

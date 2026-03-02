@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { Wallet, CheckCircle, XCircle, Info, LogOut, Key, Tags } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
 import RecordForm from './components/RecordForm.vue'
 import ImportBill from './components/ImportBill.vue'
 import RecordFilter from './components/RecordFilter.vue'
 import RecordTable from './components/RecordTable.vue'
+import AnnualExpenseDashboard from './components/AnnualExpenseDashboard.vue'
 import MemberManagement from './components/MemberManagement.vue'
 import ApiTokenManagement from './components/ApiTokenManagement.vue'
 import CategoryKeywordsSettings from './components/CategoryKeywordsSettings.vue'
@@ -23,6 +24,8 @@ const showImportModal = ref(false)
 const showMemberModal = ref(false)
 const showApiTokenModal = ref(false)
 const showCategoryKeywordModal = ref(false)
+const activePage = ref<'records' | 'visualization'>('records')
+const dataVersion = ref(0)
 
 const currentFilter = ref({ startMonth: '', endMonth: '', memberId: 'all' })
 
@@ -82,16 +85,19 @@ const showMessage = (text: string, type: 'success' | 'error' | 'info') => {
 
 const handleRecordAdded = () => {
   showMessage('记录添加成功', 'success')
+  dataVersion.value += 1
   recordFilterRef.value?.loadRecords()
 }
 
 const handleRecordDeleted = () => {
   showMessage('记录删除成功', 'success')
+  dataVersion.value += 1
   recordFilterRef.value?.loadRecords()
 }
 
 const handleRecordUpdated = () => {
   showMessage('记录分类修改成功', 'success')
+  dataVersion.value += 1
   recordFilterRef.value?.loadRecords()
 }
 
@@ -105,6 +111,16 @@ const handleError = (error: string) => {
 
 const handleSuccess = (msg: string) => {
   showMessage(msg, 'success')
+}
+
+const switchToRecords = async () => {
+  activePage.value = 'records'
+  await nextTick()
+  recordFilterRef.value?.loadRecords()
+}
+
+const switchToVisualization = () => {
+  activePage.value = 'visualization'
 }
 </script>
 
@@ -190,8 +206,29 @@ const handleSuccess = (msg: string) => {
       </div>
     </header>
 
+    <div class="sticky top-[88px] z-30 bg-white/95 backdrop-blur-md shadow-sm b-b-solid b-b-1px b-b-gray-200">
+      <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-2">
+        <div class="inline-flex items-center p-1 rounded-xl bg-gray-100">
+          <button
+            @click="switchToRecords"
+            class="h-9 px-4 rounded-lg text-sm font-semibold transition-all"
+            :class="activePage === 'records' ? 'bg-white shadow text-emerald-700' : 'text-gray-600 hover:text-gray-800'"
+          >
+            账单统计
+          </button>
+          <button
+            @click="switchToVisualization"
+            class="h-9 px-4 rounded-lg text-sm font-semibold transition-all"
+            :class="activePage === 'visualization' ? 'bg-white shadow text-rose-700' : 'text-gray-600 hover:text-gray-800'"
+          >
+            年度支出可视化
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Filter Bar - Fixed at top -->
-    <div class="sticky top-[88px] z-30 bg-white/95 backdrop-blur-md shadow-md b-b-solid b-b-1px b-b-gray-200">
+    <div v-if="activePage === 'records'" class="sticky top-[140px] z-20 bg-white/95 backdrop-blur-md shadow-md b-b-solid b-b-1px b-b-gray-200">
       <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-2">
         <RecordFilter
           ref="recordFilterRef"
@@ -210,12 +247,18 @@ const handleSuccess = (msg: string) => {
     <!-- Main Content -->
     <main class="px-4 sm:px-6 lg:px-8 py-4">
       <RecordTable
+        v-if="activePage === 'records'"
         :records="records"
         :loading="loading"
         :current-filter="currentFilter"
         :members="members"
         @record-deleted="handleRecordDeleted"
         @record-updated="handleRecordUpdated"
+      />
+      <AnnualExpenseDashboard
+        v-else
+        :members="members"
+        :data-version="dataVersion"
       />
     </main>
 

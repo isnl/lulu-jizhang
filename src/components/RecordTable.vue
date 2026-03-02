@@ -18,6 +18,19 @@ const emit = defineEmits<{
   recordUpdated: []
 }>()
 
+interface DetailRecord {
+  id: number
+  type: '支出' | '收入'
+  category: string
+  amount: number
+  date: string
+  remark?: string
+  memberId: number | null
+  deleteLoading: boolean
+  isEditingCategory: boolean
+  editCategoryValue: string
+}
+
 // Tab切换状态
 const activeTab = ref<'expense' | 'income'>('expense')
 
@@ -122,8 +135,65 @@ const getSubtotal = (record: any, type: 'expense' | 'income') => {
 // 明细状态
 const showDetailsModal = ref(false)
 const detailsLoading = ref(false)
-const detailsData = ref<any[]>([])
+const detailsData = ref<DetailRecord[]>([])
 const detailsTitle = ref('')
+const detailsRemarkKeyword = ref('')
+const detailsAmountSort = ref<'default' | 'asc' | 'desc'>('default')
+const detailsMemberFilter = ref('all')
+
+const resetDetailsFilters = () => {
+  detailsRemarkKeyword.value = ''
+  detailsAmountSort.value = 'default'
+  detailsMemberFilter.value = 'all'
+}
+
+const closeDetailsModal = () => {
+  showDetailsModal.value = false
+  resetDetailsFilters()
+}
+
+const getMemberName = (id: number | null) => {
+  if (id === null || id === undefined || !props.members) return '家庭'
+  const member = props.members.find(m => m.id === id)
+  return member ? member.name : '未知'
+}
+
+const detailsMemberOptions = computed(() => {
+  const options = new Map<string, string>()
+  detailsData.value.forEach((item) => {
+    const key = item.memberId === null ? 'family' : String(item.memberId)
+    if (!options.has(key)) {
+      options.set(key, getMemberName(item.memberId))
+    }
+  })
+  return Array.from(options.entries()).map(([value, label]) => ({ value, label }))
+})
+
+const filteredDetailsData = computed(() => {
+  let result = [...detailsData.value]
+
+  const keyword = detailsRemarkKeyword.value.trim().toLowerCase()
+  if (keyword) {
+    result = result.filter(item => (item.remark || '').toLowerCase().includes(keyword))
+  }
+
+  if (detailsMemberFilter.value === 'family') {
+    result = result.filter(item => item.memberId === null)
+  } else if (detailsMemberFilter.value !== 'all') {
+    const targetMemberId = Number(detailsMemberFilter.value)
+    if (!Number.isNaN(targetMemberId)) {
+      result = result.filter(item => item.memberId === targetMemberId)
+    }
+  }
+
+  if (detailsAmountSort.value === 'asc') {
+    result = result.sort((a, b) => a.amount - b.amount)
+  } else if (detailsAmountSort.value === 'desc') {
+    result = result.sort((a, b) => b.amount - a.amount)
+  }
+
+  return result
+})
 
 // 获取明细数据
 const fetchDetails = async (record: any, category: string, type: '支出' | '收入') => {
@@ -147,13 +217,20 @@ const fetchDetails = async (record: any, category: string, type: '支出' | '收
     showDetailsModal.value = true
     detailsTitle.value = `${record.date} ${category} ${type}明细`
     detailsData.value = []
+    resetDetailsFilters()
 
-    let url = `/api/records/list?startDate=${startDate}&endDate=${endDate}&type=${type}&category=${encodeURIComponent(category)}&memberId=${memberId}`
+    const url = `/api/records/list?startDate=${startDate}&endDate=${endDate}&type=${type}&category=${encodeURIComponent(category)}&memberId=${memberId}`
     const response = await authFetch(url)
     const result = await response.json()
     if (result.success) {
-      detailsData.value = result.data.map((item: any) => ({ 
-        ...item, 
+      detailsData.value = result.data.map((item: any) => ({
+        id: item.id,
+        type: item.type,
+        category: item.category,
+        amount: Number(item.amount) || 0,
+        date: item.date,
+        remark: item.remark,
+        memberId: item.memberId ?? null,
         deleteLoading: false,
         isEditingCategory: false,
         editCategoryValue: item.category
@@ -166,12 +243,6 @@ const fetchDetails = async (record: any, category: string, type: '支出' | '收
   } finally {
     detailsLoading.value = false
   }
-}
-
-const getMemberName = (id: number | null) => {
-  if (!id || !props.members) return '家庭'
-  const member = props.members.find(m => m.id === id)
-  return member ? member.name : '未知'
 }
 
 const deleteRecord = async (id: number) => {
@@ -194,9 +265,9 @@ const deleteRecord = async (id: number) => {
       // 通知父级数据已变更，需要刷新主统计表
       emit('recordDeleted')
       
-      // 如果明细为空了，可以关闭弹窗
+      // 如果明细为空了，关闭弹窗
       if (detailsData.value.length === 0) {
-        showDetailsModal.value = false
+        closeDetailsModal()
       }
     } else {
       alert(result.error || '删除失败')
@@ -237,7 +308,7 @@ const updateCategory = async (item: any) => {
 
       // 如果明细为空了，关闭弹窗
       if (detailsData.value.length === 0) {
-        showDetailsModal.value = false
+        closeDetailsModal()
       }
     } else {
       alert(result.error || '更新失败')
@@ -493,8 +564,8 @@ const updateCategory = async (item: any) => {
     <Modal
       :show="showDetailsModal"
       :title="detailsTitle"
-      size="lg"
-      @close="showDetailsModal = false"
+      size="xl"
+      @close="closeDetailsModal"
     >
       <div v-if="detailsLoading" class="flex flex-col items-center justify-center py-16">
         <Loader2 :size="48" class="text-emerald-500 animate-spin" />
@@ -504,76 +575,123 @@ const updateCategory = async (item: any) => {
         <FileText :size="64" class="mx-auto text-gray-300 mb-4" />
         <p class="text-gray-500 text-lg">暂无明细数据</p>
       </div>
-      <div v-else class="max-h-[60vh] overflow-y-auto custom-scrollbar">
-        <div class="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="bg-gray-50 text-gray-600">
-                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">日期</th>
-                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">分类</th>
-                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">成员</th>
-                <th class="px-4 py-2 text-left font-medium border-b border-gray-200">备注</th>
-                <th class="px-4 py-2 text-right font-medium border-b border-gray-200">金额</th>
-                <th class="px-4 py-2 text-center font-medium border-b border-gray-200">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="(item, idx) in detailsData"
-                :key="item.id || idx"
-                class="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                :class="{ 'bg-gray-50/50': idx % 2 === 0, 'opacity-50': item.deleteLoading }"
+      <div v-else class="max-h-[70vh] flex flex-col">
+        <div class="sticky top-0 z-20 bg-white b-b-solid b-b-1px b-b-gray-200 pb-3 mb-3">
+          <div class="flex items-center justify-between gap-3 mb-2 flex-wrap">
+            <div class="text-sm text-gray-600">共 {{ detailsData.length }} 条，筛选后 {{ filteredDetailsData.length }} 条</div>
+            <button
+              type="button"
+              @click="resetDetailsFilters"
+              class="h-8 px-3 rounded-md text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              重置筛选
+            </button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <input
+              v-model="detailsRemarkKeyword"
+              type="text"
+              placeholder="按备注模糊匹配"
+              class="h-9 px-3 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500"
+            />
+            <select
+              v-model="detailsAmountSort"
+              class="h-9 px-3 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500"
+            >
+              <option value="default">金额排序：默认</option>
+              <option value="desc">金额排序：从大到小</option>
+              <option value="asc">金额排序：从小到大</option>
+            </select>
+            <select
+              v-model="detailsMemberFilter"
+              class="h-9 px-3 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500"
+            >
+              <option value="all">成员：全部</option>
+              <option
+                v-for="option in detailsMemberOptions"
+                :key="option.value"
+                :value="option.value"
               >
-                <td class="px-4 py-2 text-gray-800 whitespace-nowrap">{{ item.date }}</td>
-                <td class="px-4 py-2 whitespace-nowrap">
-                  <div v-if="item.isEditingCategory" class="flex items-center gap-1">
-                    <select
-                      v-model="item.editCategoryValue"
-                      class="px-2 py-1 text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                    >
-                      <option v-for="cat in (item.type === '支出' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES)" :key="cat" :value="cat">
-                        {{ cat }}
-                      </option>
-                    </select>
-                    <button @click="updateCategory(item)" class="text-emerald-600 hover:text-emerald-800 p-0.5">确认</button>
-                    <button @click="item.isEditingCategory = false; item.editCategoryValue = item.category" class="text-gray-400 hover:text-gray-600 p-0.5">取消</button>
-                  </div>
-                  <div v-else class="flex items-center gap-2 group">
-                    <span class="text-sm font-medium text-gray-700">{{ item.category }}</span>
+                成员：{{ option.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto custom-scrollbar">
+          <div v-if="filteredDetailsData.length === 0" class="text-center py-10 text-gray-500">
+            当前筛选条件下没有匹配数据
+          </div>
+          <div v-else class="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
+            <table class="w-full text-sm">
+              <thead class="sticky top-0 z-10 bg-gray-50 text-gray-600">
+                <tr>
+                  <th class="px-4 py-2 text-left font-medium border-b border-gray-200 whitespace-nowrap">日期</th>
+                  <th class="px-4 py-2 text-left font-medium border-b border-gray-200 whitespace-nowrap">分类</th>
+                  <th class="px-4 py-2 text-left font-medium border-b border-gray-200 w-[180px] min-w-[180px]">成员</th>
+                  <th class="px-4 py-2 text-left font-medium border-b border-gray-200 min-w-[220px]">备注</th>
+                  <th class="px-4 py-2 text-right font-medium border-b border-gray-200 whitespace-nowrap">金额</th>
+                  <th class="px-4 py-2 text-center font-medium border-b border-gray-200 whitespace-nowrap">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(item, idx) in filteredDetailsData"
+                  :key="item.id || idx"
+                  class="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                  :class="{ 'bg-gray-50/50': idx % 2 === 0, 'opacity-50': item.deleteLoading }"
+                >
+                  <td class="px-4 py-2 text-gray-800 whitespace-nowrap">{{ item.date }}</td>
+                  <td class="px-4 py-2 whitespace-nowrap">
+                    <div v-if="item.isEditingCategory" class="flex items-center gap-1">
+                      <select
+                        v-model="item.editCategoryValue"
+                        class="px-2 py-1 text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option v-for="cat in (item.type === '支出' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES)" :key="cat" :value="cat">
+                          {{ cat }}
+                        </option>
+                      </select>
+                      <button @click="updateCategory(item)" class="text-emerald-600 hover:text-emerald-800 p-0.5">确认</button>
+                      <button @click="item.isEditingCategory = false; item.editCategoryValue = item.category" class="text-gray-400 hover:text-gray-600 p-0.5">取消</button>
+                    </div>
+                    <div v-else class="flex items-center gap-2 group">
+                      <span class="text-sm font-medium text-gray-700">{{ item.category }}</span>
+                      <button
+                        @click="item.isEditingCategory = true"
+                        class="text-xs text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity hover:underline"
+                      >
+                        修改
+                      </button>
+                    </div>
+                  </td>
+                  <td class="px-4 py-2 w-[180px] min-w-[180px]">
+                    <span class="inline-flex px-2 py-0.5 rounded text-xs border border-gray-200 whitespace-nowrap" :style="item.memberId ? 'background: #f3f4f6' : 'background: #e5e7eb; color: #4b5563'">
+                      {{ getMemberName(item.memberId) }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2 text-gray-600" :title="item.remark">{{ item.remark || '-' }}</td>
+                  <td class="px-4 py-2 text-right font-semibold whitespace-nowrap" :class="item.type === '支出' ? 'text-red-600' : 'text-emerald-600'">
+                    {{ item.amount?.toFixed(2) }}
+                  </td>
+                  <td class="px-4 py-2 text-center whitespace-nowrap">
                     <button
-                      @click="item.isEditingCategory = true"
-                      class="text-xs text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity hover:underline"
+                      @click="deleteRecord(item.id)"
+                      :disabled="item.deleteLoading"
+                      class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors disabled:opacity-50"
                     >
-                      修改
+                      {{ item.deleteLoading ? '删除中...' : '删除' }}
                     </button>
-                  </div>
-                </td>
-                <td class="px-4 py-2">
-                  <span class="px-2 py-0.5 rounded text-xs border border-gray-200" :style="item.memberId ? 'background: #f3f4f6' : 'background: #e5e7eb; color: #4b5563'">
-                    {{ getMemberName(item.memberId) }}
-                  </span>
-                </td>
-                <td class="px-4 py-2 text-gray-600" :title="item.remark">{{ item.remark || '-' }}</td>
-                <td class="px-4 py-2 text-right font-semibold whitespace-nowrap" :class="item.type === '支出' ? 'text-red-600' : 'text-emerald-600'">
-                  {{ item.amount?.toFixed(2) }}
-                </td>
-                <td class="px-4 py-2 text-center whitespace-nowrap">
-                  <button
-                    @click="deleteRecord(item.id)"
-                    :disabled="item.deleteLoading"
-                    class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors disabled:opacity-50"
-                  >
-                    {{ item.deleteLoading ? '删除中...' : '删除' }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
       <div class="flex justify-end mt-4 pt-4 border-t border-gray-200">
         <button
-          @click="showDetailsModal = false"
+          @click="closeDetailsModal"
           class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
         >
           关闭
@@ -607,4 +725,3 @@ const updateCategory = async (item: any) => {
   background: linear-gradient(to right, #059669, #0d9488);
 }
 </style>
-
