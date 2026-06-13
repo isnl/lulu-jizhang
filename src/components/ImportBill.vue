@@ -83,6 +83,45 @@ const triggerFileInput = () => {
   fileInput.value?.click()
 }
 
+const parseBillAmount = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return value
+  }
+
+  const normalized = String(value ?? '').replace(/[¥￥,\s]/g, '')
+  return parseFloat(normalized)
+}
+
+const getCellText = (value: unknown): string => {
+  return String(value ?? '').replace(/^\uFEFF/, '').replace(/\t/g, '').trim()
+}
+
+const normalizeHeaderText = (value: unknown): string => {
+  return getCellText(value).replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')')
+}
+
+const parseBillDate = (value: unknown): string | null => {
+  if (typeof value === 'number') {
+    // Excel日期序列号转换为JavaScript Date
+    const dateObj = new Date((value - 25569) * 86400 * 1000)
+    if (isNaN(dateObj.getTime())) return null
+    return dateObj.toISOString().split('T')[0]
+  }
+
+  const dateText = getCellText(value).replace(/^#+$/, '')
+  if (!dateText) return null
+
+  const match = dateText.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/)
+  if (match) {
+    const [, year, month, day] = match
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+
+  const dateObj = new Date(dateText)
+  if (isNaN(dateObj.getTime())) return null
+  return dateObj.toISOString().split('T')[0]
+}
+
 // 判断是否为重复数据（基于文本特征简单判断，仅用作补充）
 const isTextDuplicate = (record: RecordData): boolean => {
   const remark = record.remark || ''
@@ -231,12 +270,12 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       const row = rows[i]
       if (!row || row.length < 6) continue // Skip empty rows
 
-      const dateStr = row[0]
+      const dateRaw = row[0]
       const transactionType = row[1] // 交易类型
       const counterparty = row[2] // 交易对方
       const product = row[3] // 商品
       const direction = row[4] // 收/支
-      const amountStr = row[5] // 金额
+      const amountRaw = row[5] // 金额
       const status = row[7] // 当前状态
 
       // Filter valid transaction status
@@ -249,13 +288,12 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       else continue // Skip neutral or other types
 
       // Parse Amount (remove ¥ and commas)
-      const amount = parseFloat(amountStr.replace(/[¥,]/g, ''))
+      const amount = parseBillAmount(amountRaw)
       if (isNaN(amount)) continue
 
       // Parse Date
-      const dateObj = new Date(dateStr)
-      if (isNaN(dateObj.getTime())) continue
-      const formattedDate = dateObj.toISOString().split('T')[0]
+      const formattedDate = parseBillDate(dateRaw)
+      if (!formattedDate) continue
 
       // Construct Remark - 包含交易类型信息
       const remark = `${counterparty} - ${product}`.substring(0, 50) // Limit length
@@ -277,8 +315,8 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
 
 // 解析支付宝账单
 const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: string } => {
-  // 支付宝CSV格式:前4行是元数据,第5行是表头
-  // 第一行通常包含账户信息，如"姓名,xxx"
+  // 支付宝CSV格式:前几行是元数据,之后是表头
+  // 前几行通常包含账户信息，如"姓名,xxx"或"账号:[xxx]"
   // 表头:交易号,商家订单号,交易创建时间,付款时间,最近修改时间,交易来源地,类型,交易对方,商品名称,金额(元),收/支,交易状态,服务费(元),成功退款(元),备注,资金状态
 
   if (rows.length < 6) {
@@ -287,18 +325,18 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
 
   // 尝试从元数据中提取账户姓名（通常在前几行）
   let accountName = ''
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
     const row = rows[i]
     if (row && row.length > 0) {
-      const firstCell = String(row[0] || '').trim()
-      if (firstCell.startsWith('姓名') || firstCell.startsWith('账号')) {
-        let val = firstCell.replace(/^(姓名|账号)[：:]\s*/, '').trim()
+      const firstCell = getCellText(row[0])
+      if (firstCell.startsWith('姓名') || firstCell.startsWith('账号') || firstCell.startsWith('#账户名')) {
+        let val = firstCell.replace(/^#?(姓名|账号|账户名)[：:]\s*/, '').trim()
         if (val.startsWith('[')) val = val.substring(1)
         if (val.endsWith(']')) val = val.substring(0, val.length - 1)
         val = val.trim()
 
         if (val === '') {
-          accountName = String(row[1] || '').trim()
+          accountName = getCellText(row[1]) || getCellText(rows[i + 1]?.[0]).replace(/^[：:]\s*/, '')
         } else {
           accountName = val
         }
@@ -307,26 +345,110 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
     }
   }
 
-  // 第5行(索引4)是表头
-  const headerRow = rows[4]
-  if (!headerRow || String(headerRow[0]).trim() !== '交易号') {
+  const headerRowIndex = rows.findIndex(row => {
+    if (!row || row.length === 0) return false
+    const headers = row.map(normalizeHeaderText)
+    return headers.includes('交易号') &&
+      headers.some(header => header === '金额(元)' || header === '金额') &&
+      headers.includes('收/支') &&
+      headers.includes('交易状态')
+  })
+
+  const balanceHeaderRowIndex = rows.findIndex(row => {
+    if (!row || row.length === 0) return false
+    const headers = row.map(normalizeHeaderText)
+    return headers.includes('流水号') &&
+      headers.includes('时间') &&
+      headers.includes('名称') &&
+      headers.includes('收入') &&
+      headers.includes('支出')
+  })
+
+  if (headerRowIndex === -1 && balanceHeaderRowIndex === -1) {
     throw new Error('无法识别支付宝账单格式,未找到正确的表头')
+  }
+
+  const actualHeaderRowIndex = headerRowIndex !== -1 ? headerRowIndex : balanceHeaderRowIndex
+  const headerRow = rows[actualHeaderRowIndex]
+  const findColumn = (names: string[]): number => {
+    const normalizedHeaders = headerRow.map(normalizeHeaderText)
+    for (const name of names) {
+      const index = normalizedHeaders.indexOf(name)
+      if (index !== -1) return index
+    }
+    return -1
+  }
+
+  if (headerRowIndex === -1) {
+    const timeIndex = findColumn(['时间'])
+    const nameIndex = findColumn(['名称'])
+    const remarkIndex = findColumn(['备注'])
+    const incomeIndex = findColumn(['收入'])
+    const expenseIndex = findColumn(['支出'])
+
+    if ([timeIndex, nameIndex, incomeIndex, expenseIndex].some(index => index === -1)) {
+      throw new Error('支付宝收支明细表头缺少必要列')
+    }
+
+    const records: RecordData[] = []
+    for (let i = actualHeaderRowIndex + 1; i < rows.length; i++) {
+      const row = rows[i]
+      if (!row || row.length <= Math.max(timeIndex, nameIndex, incomeIndex, expenseIndex)) continue
+
+      const income = parseBillAmount(row[incomeIndex])
+      const expense = Math.abs(parseBillAmount(row[expenseIndex]))
+      const hasIncome = !isNaN(income) && income > 0
+      const hasExpense = !isNaN(expense) && expense > 0
+      if (!hasIncome && !hasExpense) continue
+
+      const formattedDate = parseBillDate(row[timeIndex])
+      if (!formattedDate) continue
+
+      const type: '支出' | '收入' = hasExpense ? '支出' : '收入'
+      const amount = hasExpense ? expense : income
+      const name = getCellText(row[nameIndex])
+      const remark = remarkIndex === -1 ? '' : getCellText(row[remarkIndex])
+      const finalRemark = remark ? `${name} - ${remark}`.substring(0, 50) : name.substring(0, 50)
+      const category = smartCategoryMapping(type, name, remark, finalRemark)
+
+      records.push({
+        type,
+        category,
+        amount,
+        date: formattedDate,
+        remark: finalRemark
+      })
+    }
+
+    return { records, accountName }
+  }
+
+  const paymentTimeIndex = findColumn(['付款时间', '交易创建时间'])
+  const counterpartyIndex = findColumn(['交易对方'])
+  const productIndex = findColumn(['商品名称'])
+  const amountIndex = findColumn(['金额(元)', '金额'])
+  const directionIndex = findColumn(['收/支'])
+  const statusIndex = findColumn(['交易状态'])
+  const remarkIndex = findColumn(['备注'])
+
+  if ([paymentTimeIndex, counterpartyIndex, productIndex, amountIndex, directionIndex, statusIndex].some(index => index === -1)) {
+    throw new Error('支付宝账单表头缺少必要列')
   }
 
   const records: RecordData[] = []
   
-  // 从第6行(索引5)开始是数据
-  for (let i = 5; i < rows.length; i++) {
+  // 从表头下一行开始是数据
+  for (let i = headerRowIndex + 1; i < rows.length; i++) {
       const row = rows[i]
-      if (!row || row.length < 11) continue // Skip empty rows
+      if (!row || row.length <= Math.max(paymentTimeIndex, counterpartyIndex, productIndex, amountIndex, directionIndex, statusIndex)) continue // Skip empty rows
 
-      const paymentTimeRaw = row[3] // 付款时间(保留原始类型)
-      const counterparty = String(row[7] || '').trim() // 交易对方
-      const product = String(row[8] || '').trim() // 商品名称
-      const amountStr = String(row[9] || '').trim() // 金额(元)
-      const direction = String(row[10] || '').trim() // 收/支
-      const status = String(row[11] || '').trim() // 交易状态
-      const remark = String(row[14] || '').trim() // 备注
+      const paymentTimeRaw = row[paymentTimeIndex] // 付款时间(保留原始类型)
+      const counterparty = getCellText(row[counterpartyIndex]) // 交易对方
+      const product = getCellText(row[productIndex]) // 商品名称
+      const amountRaw = row[amountIndex] // 金额(元)
+      const direction = getCellText(row[directionIndex]) // 收/支
+      const status = getCellText(row[statusIndex]) // 交易状态
+      const remark = remarkIndex === -1 ? '' : getCellText(row[remarkIndex]) // 备注
 
       // Filter valid transaction status
       if (status !== '交易成功') continue
@@ -338,22 +460,13 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
       else continue // Skip "不计收支" or other types
 
       // Parse Amount
-      const amount = parseFloat(amountStr)
+      const amount = parseBillAmount(amountRaw)
       if (isNaN(amount) || amount === 0) continue
 
       // Parse Date
       // XLSX可能将日期转换为Excel序列号,需要特殊处理
-      let dateObj: Date
-      if (typeof paymentTimeRaw === 'number') {
-        // Excel日期序列号转换为JavaScript Date
-        // Excel起始日期是1900-01-01,但实际是1899-12-30(Excel的bug)
-        dateObj = new Date((paymentTimeRaw - 25569) * 86400 * 1000)
-      } else {
-        dateObj = new Date(paymentTimeRaw)
-      }
-
-      if (isNaN(dateObj.getTime())) continue
-      const formattedDate = dateObj.toISOString().split('T')[0]
+      const formattedDate = parseBillDate(paymentTimeRaw)
+      if (!formattedDate) continue
 
       // Construct Remark
       const finalRemark = remark || `${counterparty} - ${product}`.substring(0, 50)
@@ -796,13 +909,19 @@ const handleFileChange = async (event: Event) => {
         let workbook: any
 
         if (billType.value === 'alipay') {
-          // 支付宝账单使用GBK编码,使用FileReader API读取
-          try {
-            const text = await convertGBKtoUTF8(file)
-            // 将解码后的文本传给XLSX
-            workbook = XLSX.read(text, { type: 'string' })
-          } catch (err: any) {
-            throw new Error(`GBK编码解析失败: ${err.message}`)
+          const extension = file.name.split('.').pop()?.toLowerCase()
+          if (extension === 'csv') {
+            // 支付宝CSV账单通常使用GBK编码
+            try {
+              const text = await convertGBKtoUTF8(file)
+              workbook = XLSX.read(text, { type: 'string' })
+            } catch (err: any) {
+              throw new Error(`GBK编码解析失败: ${err.message}`)
+            }
+          } else {
+            // 支付宝新版收支明细常见为Excel文件，直接按二进制读取
+            const data = await file.arrayBuffer()
+            workbook = XLSX.read(data, { type: 'array' })
           }
         } else {
           // 微信账单使用默认编码
