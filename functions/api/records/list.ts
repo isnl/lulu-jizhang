@@ -73,6 +73,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             amount: row.amount,
             date: row.date,
             remark: row.remark,
+            source: row.source || '',
             memberId: row.member_id,
             createdAt: row.created_at,
             updatedAt: row.updated_at

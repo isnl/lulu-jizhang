@@ -28,6 +28,7 @@ export interface RecordData {
     amount: number
     date: string
     remark?: string
+    source?: string                  // 导入来源/记账来源
     memberId?: number | null        // 关联成员ID
     memberName?: string             // 成员名称（用于显示）
     createdAt?: string

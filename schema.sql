@@ -32,6 +32,7 @@ CREATE TABLE records (
   amount REAL NOT NULL CHECK(amount >= 0 AND amount <= 999999999),
   date TEXT NOT NULL,
   remark TEXT DEFAULT '',
+  source TEXT DEFAULT '',                -- 来源（微信/支付宝/银行卡/信用卡/京东/手动等）
   member_id INTEGER REFERENCES members(id),  -- 关联家庭成员（NULL表示家庭共同账单）
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

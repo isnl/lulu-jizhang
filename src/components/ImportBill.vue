@@ -23,7 +23,17 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const isProcessing = ref(false)
 const previewRecords = ref<RecordData[]>([])
 const showPreview = ref(false)
-const billType = ref<'wechat' | 'alipay' | 'credit' | 'jd' | 'bank'>('wechat') // 账单类型
+type BillType = 'wechat' | 'alipay' | 'credit' | 'jd' | 'bank'
+const billType = ref<BillType>('wechat') // 账单类型
+const SOURCE_LABELS: Record<BillType, string> = {
+  wechat: '微信',
+  alipay: '支付宝',
+  credit: '信用卡',
+  jd: '京东',
+  bank: '银行卡'
+}
+const editingImportRemarkIndex = ref<number | null>(null)
+const editingImportRemark = ref('')
 
 // 成员选择相关
 const selectedMemberId = ref<number | null>(null)
@@ -83,6 +93,25 @@ const triggerFileInput = () => {
   fileInput.value?.click()
 }
 
+const getCurrentSource = () => SOURCE_LABELS[billType.value] || ''
+
+const startImportRemarkEdit = (record: RecordData, index: number) => {
+  editingImportRemarkIndex.value = index
+  editingImportRemark.value = record.remark || ''
+}
+
+const saveImportRemarkEdit = (record: RecordData) => {
+  if (editingImportRemarkIndex.value === null) return
+  record.remark = editingImportRemark.value.trim()
+  editingImportRemarkIndex.value = null
+  editingImportRemark.value = ''
+}
+
+const cancelImportRemarkEdit = () => {
+  editingImportRemarkIndex.value = null
+  editingImportRemark.value = ''
+}
+
 const parseBillAmount = (value: unknown): number => {
   if (typeof value === 'number') {
     return value
@@ -125,12 +154,17 @@ const parseBillDate = (value: unknown): string | null => {
 // 判断是否为重复数据（基于文本特征简单判断，仅用作补充）
 const isTextDuplicate = (record: RecordData): boolean => {
   const remark = record.remark || ''
-  return remark.includes('支付宝-') || 
-         remark.includes('财付通-') || 
-         remark.includes('微信支付') || 
-         remark.includes('快捷支付') || 
-         remark.includes('扫码') || 
-         remark.includes('美团订单')
+  const duplicateKeywords = [
+    '支付宝',
+    '财付通',
+    '网银在线',
+    '微信支付',
+    '快捷支付',
+    '扫码',
+    '美团订单'
+  ]
+
+  return duplicateKeywords.some(keyword => remark.includes(keyword))
 }
 
 // 从微信账单中提取昵称
@@ -280,6 +314,7 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
 
       // Filter valid transaction status
       if (status !== '支付成功' && status !== '已到账' && status !== '对方已收钱' && status !== '朋友已收钱' && status !== '已存入零钱' && status !== '已转账') continue
+      if (getCellText(counterparty) === '京东') continue
 
       // Determine Type
       let type: '支出' | '收入'
@@ -302,11 +337,12 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
       const category = smartCategoryMapping(type, counterparty, product, remark, transactionType)
 
       records.push({
-          type,
-          category,
-          amount,
-          date: formattedDate,
-          remark
+        type,
+        category,
+        amount,
+        date: formattedDate,
+        remark,
+        source: '微信'
       })
   }
 
@@ -964,6 +1000,11 @@ const handleFileChange = async (event: Event) => {
         throw new Error('未找到有效记录')
     }
 
+    const source = getCurrentSource()
+    records.forEach(record => {
+      record.source = source
+    })
+
     previewRecords.value = records
 
     // 如果没有自动识别到成员，且当前未选择，并且有上次选择的记录，使用上次记录
@@ -1375,8 +1416,23 @@ const cancelMemberConfirm = () => {
                   <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
                     {{ record.amount.toFixed(2) }}
                   </td>
-                  <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
-                    {{ record.remark }}
+                  <td class="px-4 py-3 text-gray-600 max-w-xs" :title="record.remark">
+                    <input
+                      v-if="editingImportRemarkIndex === idx"
+                      v-model="editingImportRemark"
+                      class="w-full px-2 py-1 text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      @blur="saveImportRemarkEdit(record)"
+                      @keydown.enter.prevent="saveImportRemarkEdit(record)"
+                      @keydown.esc.prevent="cancelImportRemarkEdit"
+                    />
+                    <span
+                      v-else
+                      class="block truncate cursor-text rounded px-1 py-0.5 hover:bg-emerald-50"
+                      title="双击修改备注"
+                      @dblclick="startImportRemarkEdit(record, idx)"
+                    >
+                      {{ record.remark || '-' }}
+                    </span>
                   </td>
                 </tr>
                 <tr v-if="validRecords.length === 0">

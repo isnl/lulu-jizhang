@@ -7,6 +7,8 @@ import { authFetch } from '../utils/auth'
 import { RECORD_TYPES, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types'
 import type { Member } from '../types'
 
+const SOURCE_OPTIONS = ['手动', '微信', '支付宝', '信用卡', '京东', '银行卡']
+
 const props = defineProps<{
   members?: Member[]
 }>()
@@ -26,6 +28,7 @@ const formData = ref({
   amount: '',
   date: new Date().toISOString().split('T')[0],
   remark: '',
+  source: '手动',
   memberId: null as number | null
 })
 
@@ -83,6 +86,7 @@ const handleSubmit = async () => {
       amount: '',
       date: new Date().toISOString().split('T')[0],
       remark: '',
+      source: '手动',
       memberId: null
     }
 
@@ -181,6 +185,14 @@ const handleSubmit = async () => {
         />
       </div>
 
+      <div>
+        <label class="block mb-2 font-semibold text-gray-700 text-sm">来源</label>
+        <CustomSelect
+          v-model="formData.source"
+          :options="SOURCE_OPTIONS"
+        />
+      </div>
+
       <button
         type="submit"
         class="w-full px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold rounded-lg hover:from-emerald-600 hover:to-teal-600 transition-all shadow-md hover:shadow-lg hover:translate-y-[-1px] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -193,4 +205,3 @@ const handleSubmit = async () => {
     </form>
   </div>
 </template>
-

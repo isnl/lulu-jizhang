@@ -65,7 +65,19 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     }
 };
 
-// PUT /api/records/[id] - Update a record's category
+const EXPENSE_CATEGORIES = [
+    '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
+    '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗', '保险',
+    '通讯', '服饰', '还贷', '家电/家具'
+];
+
+const INCOME_CATEGORIES = [
+    '工资', '投资收入', '稿费收入', '其他'
+];
+
+const CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
+
+// PUT /api/records/[id] - Update a record's editable fields
 export const onRequestPut: PagesFunction<Env> = async (context) => {
     try {
         const auth = await authenticate(context.request, context.env);
@@ -85,12 +97,36 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
             });
         }
 
-        const body = await context.request.json() as { category: string };
-        const { category } = body;
+        const body = await context.request.json() as { category?: string; remark?: string; source?: string };
+        const updates: string[] = [];
+        const values: any[] = [];
 
-        if (!category) {
+        if (body.category !== undefined) {
+            if (!body.category || !CATEGORIES.includes(body.category)) {
+                return new Response(JSON.stringify({
+                    error: '无效的分类'
+                }), {
+                    status: 400,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+            updates.push('category = ?');
+            values.push(body.category);
+        }
+
+        if (body.remark !== undefined) {
+            updates.push('remark = ?');
+            values.push(body.remark || '');
+        }
+
+        if (body.source !== undefined) {
+            updates.push('source = ?');
+            values.push(body.source || '');
+        }
+
+        if (updates.length === 0) {
             return new Response(JSON.stringify({
-                error: '缺少分类字段'
+                error: '缺少可更新字段'
             }), {
                 status: 400,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -109,20 +145,21 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
         }
 
         // Update record
-        await DB.prepare('UPDATE records SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .bind(category, id)
+        values.push(id);
+        await DB.prepare(`UPDATE records SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+            .bind(...values)
             .run();
 
         return new Response(JSON.stringify({
             success: true,
-            message: '记录分类更新成功'
+            message: '记录更新成功'
         }), {
             status: 200,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
 
     } catch (error) {
-        console.error('更新记录分类失败:', error);
+        console.error('更新记录失败:', error);
         return new Response(JSON.stringify({
             error: '服务器内部错误'
         }), {

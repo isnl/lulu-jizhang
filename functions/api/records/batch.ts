@@ -14,6 +14,7 @@ interface RecordData {
     amount: number;
     date: string;
     remark?: string;
+    source?: string;
     memberId?: number | null;
 }
 
@@ -141,8 +142,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         const statements = records.map(record => {
             const memberId = record.memberId !== undefined ? record.memberId : batchMemberId;
             return DB.prepare(
-                'INSERT INTO records (type, category, amount, date, remark, member_id) VALUES (?, ?, ?, ?, ?, ?)'
-            ).bind(record.type, record.category, record.amount, record.date, record.remark || '', memberId);
+                'INSERT INTO records (type, category, amount, date, remark, source, member_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+            ).bind(record.type, record.category, record.amount, record.date, record.remark || '', record.source || '', memberId);
         });
 
         const results = await DB.batch(statements);

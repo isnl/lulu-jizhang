@@ -14,6 +14,7 @@ interface RecordData {
     amount: number;
     date: string;
     remark?: string;
+    source?: string;
     memberId?: number | null;  // 关联成员ID
 }
 
@@ -59,7 +60,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
         const { DB } = context.env;
         const body = await context.request.json() as RecordData;
-        const { type, category, amount, date, remark = '', memberId = null } = body;
+        const { type, category, amount, date, remark = '', source = '', memberId = null } = body;
 
         // Validation
         if (!type || !category || amount === undefined || !date) {
@@ -111,8 +112,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
         // Insert record
         const result = await DB.prepare(
-            'INSERT INTO records (type, category, amount, date, remark, member_id) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(type, category, numAmount, date, remark, memberId).run();
+            'INSERT INTO records (type, category, amount, date, remark, source, member_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(type, category, numAmount, date, remark, source, memberId).run();
 
         const record = {
             id: result.meta.last_row_id,
@@ -121,6 +122,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             amount: numAmount,
             date,
             remark,
+            source,
             memberId,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()

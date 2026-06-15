@@ -25,10 +25,13 @@ interface DetailRecord {
   amount: number
   date: string
   remark?: string
+  source?: string
   memberId: number | null
   deleteLoading: boolean
   isEditingCategory: boolean
   editCategoryValue: string
+  isEditingRemark: boolean
+  editRemarkValue: string
 }
 
 // Tab切换状态
@@ -230,10 +233,13 @@ const fetchDetails = async (record: any, category: string, type: '支出' | '收
         amount: Number(item.amount) || 0,
         date: item.date,
         remark: item.remark,
+        source: item.source || '',
         memberId: item.memberId ?? null,
         deleteLoading: false,
         isEditingCategory: false,
-        editCategoryValue: item.category
+        editCategoryValue: item.category,
+        isEditingRemark: false,
+        editRemarkValue: item.remark || ''
       }))
     } else {
       console.error(result.error)
@@ -321,6 +327,46 @@ const updateCategory = async (item: any) => {
   } finally {
     item.isEditingCategory = false
   }
+}
+
+const updateRemark = async (item: DetailRecord) => {
+  const nextRemark = item.editRemarkValue.trim()
+  if (nextRemark === (item.remark || '')) {
+    item.isEditingRemark = false
+    return
+  }
+
+  try {
+    const response = await authFetch(`/api/records/${item.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ remark: nextRemark })
+    })
+    const result = await response.json()
+
+    if (result.success) {
+      item.remark = nextRemark
+      item.editRemarkValue = nextRemark
+      item.isEditingRemark = false
+      emit('recordUpdated')
+    } else {
+      alert(result.error || '更新失败')
+      item.editRemarkValue = item.remark || ''
+    }
+  } catch (error) {
+    console.error('更新备注时发生错误:', error)
+    alert('更新备注时发生错误')
+    item.editRemarkValue = item.remark || ''
+  } finally {
+    item.isEditingRemark = false
+  }
+}
+
+const cancelRemarkEdit = (item: DetailRecord) => {
+  item.editRemarkValue = item.remark || ''
+  item.isEditingRemark = false
 }
 </script>
 
@@ -629,6 +675,7 @@ const updateCategory = async (item: any) => {
                   <th class="px-4 py-2 text-left font-medium border-b border-gray-200 whitespace-nowrap">日期</th>
                   <th class="px-4 py-2 text-left font-medium border-b border-gray-200 whitespace-nowrap">分类</th>
                   <th class="px-4 py-2 text-left font-medium border-b border-gray-200 w-[180px] min-w-[180px]">成员</th>
+                  <th class="px-4 py-2 text-left font-medium border-b border-gray-200 whitespace-nowrap">来源</th>
                   <th class="px-4 py-2 text-left font-medium border-b border-gray-200 min-w-[220px]">备注</th>
                   <th class="px-4 py-2 text-right font-medium border-b border-gray-200 whitespace-nowrap">金额</th>
                   <th class="px-4 py-2 text-center font-medium border-b border-gray-200 whitespace-nowrap">操作</th>
@@ -670,7 +717,27 @@ const updateCategory = async (item: any) => {
                       {{ getMemberName(item.memberId) }}
                     </span>
                   </td>
-                  <td class="px-4 py-2 text-gray-600" :title="item.remark">{{ item.remark || '-' }}</td>
+                  <td class="px-4 py-2 text-gray-600 whitespace-nowrap">
+                    {{ item.source || '-' }}
+                  </td>
+                  <td class="px-4 py-2 text-gray-600" :title="item.remark">
+                    <input
+                      v-if="item.isEditingRemark"
+                      v-model="item.editRemarkValue"
+                      class="w-full min-w-[220px] px-2 py-1 text-sm border border-emerald-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      @blur="updateRemark(item)"
+                      @keydown.enter.prevent="updateRemark(item)"
+                      @keydown.esc.prevent="cancelRemarkEdit(item)"
+                    />
+                    <span
+                      v-else
+                      class="block min-w-[220px] max-w-[420px] truncate cursor-text rounded px-1 py-0.5 hover:bg-emerald-50"
+                      title="双击修改备注"
+                      @dblclick="item.isEditingRemark = true; item.editRemarkValue = item.remark || ''"
+                    >
+                      {{ item.remark || '-' }}
+                    </span>
+                  </td>
                   <td class="px-4 py-2 text-right font-semibold whitespace-nowrap" :class="item.type === '支出' ? 'text-red-600' : 'text-emerald-600'">
                     {{ item.amount?.toFixed(2) }}
                   </td>
