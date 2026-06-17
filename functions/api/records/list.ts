@@ -74,6 +74,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             date: row.date,
             remark: row.remark,
             source: row.source || '',
+            counterparty: row.counterparty || '',
+            product: row.product || '',
+            payMethod: row.pay_method || '',
+            sourceTransactionId: row.source_transaction_id || '',
+            dedupeKey: row.dedupe_key || '',
             memberId: row.member_id,
             createdAt: row.created_at,
             updatedAt: row.updated_at

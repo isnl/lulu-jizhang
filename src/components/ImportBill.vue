@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2, AlertCircle, Info } from 'lucide-vue-next'
+import { Upload, FileText, CreditCard, Smartphone, Loader2, Users, ShoppingBag, Building2, AlertCircle, Info, Check, Trash2 } from 'lucide-vue-next'
 import * as XLSX from 'xlsx'
 import { convertGBKtoUTF8 } from '../utils/gbk-converter'
 import { authFetch } from '../utils/auth'
 import type { RecordData, Member, CategoryKeyword } from '../types'
 import Modal from './ui/Modal.vue'
-import CustomSelect from './ui/CustomSelect.vue'
 
 const props = defineProps<{
   onImportSuccess?: () => void
@@ -34,6 +33,27 @@ const SOURCE_LABELS: Record<BillType, string> = {
 }
 const editingImportRemarkIndex = ref<number | null>(null)
 const editingImportRemark = ref('')
+const editingCategoryIndex = ref<number | null>(null)
+
+const editingCategoryRecord = computed(() => (
+  editingCategoryIndex.value === null ? null : validRecords.value[editingCategoryIndex.value] || null
+))
+
+const currentCategoryGroup = computed(() => (
+  editingCategoryRecord.value?.type === '收入'
+    ? { title: '收入分类', options: INCOME_CATEGORIES }
+    : { title: '支出分类', options: EXPENSE_CATEGORIES }
+))
+
+const openCategoryEditor = (index: number) => {
+  editingCategoryIndex.value = index
+}
+
+const selectPreviewCategory = (category: string) => {
+  if (!editingCategoryRecord.value) return
+  editingCategoryRecord.value.category = category
+  editingCategoryIndex.value = null
+}
 
 // 成员选择相关
 const selectedMemberId = ref<number | null>(null)
@@ -47,7 +67,7 @@ const validRecords = ref<RecordData[]>([]) // 需导入的数据
 const duplicateRecords = ref<RecordData[]>([]) // 重复数据
 
 // 导入分类常量
-import { CATEGORIES } from '../types'
+import { CATEGORIES, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types'
 
 // 动态分类关键字列表
 const dynamicCategoryKeywords = ref<CategoryKeyword[]>([])
@@ -94,6 +114,308 @@ const triggerFileInput = () => {
 }
 
 const getCurrentSource = () => SOURCE_LABELS[billType.value] || ''
+
+const SOURCE_KEYS: Record<string, string> = {
+  '银行卡': 'bank',
+  '银行': 'bank',
+  '信用卡': 'credit',
+  '支付宝': 'alipay',
+  '微信': 'wechat',
+  '京东': 'jd',
+  bank: 'bank',
+  credit: 'credit',
+  alipay: 'alipay',
+  wechat: 'wechat',
+  jd: 'jd'
+}
+
+const normalizeSourceKey = (source = '') => SOURCE_KEYS[source.trim()] || source.trim().toLowerCase()
+
+const splitMergedValues = (value = '') => value.split('/').map(item => item.trim()).filter(Boolean)
+
+const normalizeSourceValues = (source = '') => {
+  const values = splitMergedValues(source)
+  return (values.length > 0 ? values : [source]).map(normalizeSourceKey).filter(Boolean)
+}
+
+const hasMergedValue = (value = '', target = '') => splitMergedValues(value).includes(target.trim())
+
+const sourcesOverlap = (a = '', b = '') => {
+  const aSources = normalizeSourceValues(a)
+  const bSources = normalizeSourceValues(b)
+  return aSources.some(source => bSources.includes(source))
+}
+
+const sourceHas = (source = '', target = '') => normalizeSourceValues(source).includes(target)
+
+const normalizeDedupeText = (value = '') => value.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').toLowerCase()
+
+const getRecordMemberId = (record: RecordData) => record.memberId === undefined ? null : record.memberId
+
+const getDedupeDetailText = (record: RecordData) => (
+  normalizeDedupeText([record.remark, record.counterparty, record.product, record.payMethod].filter(Boolean).join(' '))
+)
+
+const TRANSFER_MARKERS = [
+  '\u8f6c\u8d26',
+  '\u6c47\u6b3e',
+  '\u8de8\u884c',
+  '\u7f51\u94f6\u4e92\u8054',
+  '\u8f6c\u51fa',
+  '\u8f6c\u5165',
+  '\u5feb\u6377\u652f\u4ed8',
+  '\u94f6\u8054\u5feb\u6377\u652f\u4ed8'
+].map(normalizeDedupeText)
+
+const TRANSFER_TOKEN_STOP_WORDS = [
+  ...TRANSFER_MARKERS,
+  '\u652f\u4ed8',
+  '\u94f6\u8054',
+  '\u7f51\u94f6',
+  '\u4e92\u8054'
+].map(normalizeDedupeText).sort((a, b) => b.length - a.length)
+
+const getRecordTextParts = (record: RecordData) => (
+  [record.remark, record.counterparty, record.product, record.payMethod].filter(Boolean) as string[]
+)
+
+const hasTransferMarker = (record: RecordData) => {
+  const text = normalizeDedupeText(getRecordTextParts(record).join(' '))
+  return TRANSFER_MARKERS.some(marker => marker && text.includes(marker))
+}
+
+const getTransferCounterpartyTokens = (record: RecordData) => {
+  const tokens = new Set<string>()
+
+  for (const value of getRecordTextParts(record)) {
+    let text = normalizeDedupeText(value)
+    for (const stopWord of TRANSFER_TOKEN_STOP_WORDS) {
+      text = text.replaceAll(stopWord, '')
+    }
+    if (text.length >= 2 && text.length <= 8) {
+      tokens.add(text)
+    }
+  }
+
+  return tokens
+}
+
+const isBankCreditTransferPair = (record: RecordData, existing: RecordData) => {
+  const recordIsBank = sourceHas(record.source, 'bank')
+  const existingIsBank = sourceHas(existing.source, 'bank')
+  const recordIsCredit = sourceHas(record.source, 'credit')
+  const existingIsCredit = sourceHas(existing.source, 'credit')
+  if (!((recordIsBank && existingIsCredit) || (recordIsCredit && existingIsBank))) return false
+  if (!hasTransferMarker(record) && !hasTransferMarker(existing)) return false
+
+  const recordTokens = getTransferCounterpartyTokens(record)
+  const existingTokens = getTransferCounterpartyTokens(existing)
+  return [...recordTokens].some(token => existingTokens.has(token))
+}
+
+const isCreditThirdPartyPair = (record: RecordData, existing: RecordData) => {
+  const recordIsCredit = sourceHas(record.source, 'credit')
+  const existingIsCredit = sourceHas(existing.source, 'credit')
+  if (recordIsCredit === existingIsCredit) return false
+
+  const creditRecord = recordIsCredit ? record : existing
+  const thirdParty = recordIsCredit ? existing : record
+  const creditText = [creditRecord.remark, creditRecord.counterparty, creditRecord.product].filter(Boolean).join(' ')
+
+  if (sourceHas(thirdParty.source, 'alipay')) return creditText.includes('支付宝')
+  if (sourceHas(thirdParty.source, 'wechat')) return creditText.includes('财付通') || creditText.includes('微信')
+  return false
+}
+
+const daysBetweenRecords = (a: RecordData, b: RecordData) => {
+  return Math.abs(new Date(a.date).getTime() - new Date(b.date).getTime()) / (1000 * 3600 * 24)
+}
+
+const isSameMonth = (a: RecordData, b: RecordData) => a.date.slice(0, 7) === b.date.slice(0, 7)
+
+const SALARY_MARKERS = [
+  '\u5de5\u8d44',
+  '\u85aa',
+  '\u85aa\u916c',
+  '\u4ee3\u53d1'
+].map(normalizeDedupeText)
+
+const isSalaryIncomePair = (record: RecordData, existing: RecordData) => {
+  if (record.type !== '\u6536\u5165' || existing.type !== '\u6536\u5165') return false
+  if (getRecordMemberId(record) !== getRecordMemberId(existing)) return false
+
+  const recordText = getDedupeDetailText(record)
+  const existingText = getDedupeDetailText(existing)
+  const recordLooksSalary = record.category === '\u5de5\u8d44' || SALARY_MARKERS.some(marker => marker && recordText.includes(marker))
+  const existingLooksSalary = existing.category === '\u5de5\u8d44' || SALARY_MARKERS.some(marker => marker && existingText.includes(marker))
+  return recordLooksSalary && existingLooksSalary
+}
+
+const hasCompatibleDedupeText = (record: RecordData, existing: RecordData) => {
+  const recordText = getDedupeDetailText(record)
+  const existingText = getDedupeDetailText(existing)
+  if (!recordText || !existingText) return false
+  if (recordText === existingText) return true
+  if (recordText.length >= 4 && existingText.includes(recordText)) return true
+  if (existingText.length >= 4 && recordText.includes(existingText)) return true
+  return false
+}
+
+const hasSharedDedupeFragment = (record: RecordData, existing: RecordData) => {
+  const recordParts = [record.product, record.counterparty, record.remark]
+    .map(value => normalizeDedupeText(value || '').replace(/^(支付宝|财付通|微信支付|拼多多支付|京东支付)/, ''))
+    .filter(value => value.length >= 4)
+  const existingParts = [existing.product, existing.counterparty, existing.remark]
+    .map(value => normalizeDedupeText(value || '').replace(/^(支付宝|财付通|微信支付|拼多多支付|京东支付)/, ''))
+    .filter(value => value.length >= 4)
+
+  return recordParts.some(recordPart => existingParts.some(existingPart => (
+    recordPart.includes(existingPart) || existingPart.includes(recordPart)
+  )))
+}
+
+const bankMatchesThirdParty = (bankRecord: RecordData, otherRecord: RecordData) => {
+  const bankText = [bankRecord.remark, bankRecord.counterparty, bankRecord.product].filter(Boolean).join(' ')
+
+  if (sourceHas(otherRecord.source, 'alipay')) return bankText.includes('支付宝')
+  if (sourceHas(otherRecord.source, 'wechat')) return bankText.includes('财付通') || bankText.includes('微信')
+  if (sourceHas(otherRecord.source, 'jd')) return bankText.includes('网银在线') || bankText.includes('京东')
+  return false
+}
+
+const isBankThirdPartyPair = (record: RecordData, existing: RecordData) => (
+  (sourceHas(record.source, 'bank') && bankMatchesThirdParty(record, existing)) ||
+  (sourceHas(existing.source, 'bank') && bankMatchesThirdParty(existing, record))
+)
+
+const getBankThirdPartyReviewReason = (record: RecordData) => {
+  if (!sourceHas(record.source, 'bank')) return ''
+  const text = [record.remark, record.counterparty, record.product].filter(Boolean).join(' ')
+
+  if (text.includes('支付宝')) return '银行备注包含支付宝'
+  if (text.includes('财付通')) return '银行备注包含财付通'
+  return ''
+}
+
+const buildDedupeKey = (record: RecordData) => {
+  const source = normalizeSourceKey(record.source)
+  const amount = Number(record.amount || 0).toFixed(2)
+  const member = getRecordMemberId(record) ?? 'family'
+  const sourceId = record.sourceTransactionId?.trim()
+  if (sourceId) {
+    return [source, member, sourceId].join('|')
+  }
+
+  const text = normalizeDedupeText([record.remark, record.counterparty, record.product, record.payMethod].filter(Boolean).join(' ')).slice(0, 80)
+  return [source, record.type, record.date, amount, member, text].join('|')
+}
+
+const isDuplicateRecord = (record: RecordData, existing: RecordData) => {
+  const isCrossMemberBankThirdParty = getRecordMemberId(record) !== getRecordMemberId(existing) && isBankThirdPartyPair(record, existing)
+  const isCreditThirdParty = isCreditThirdPartyPair(record, existing)
+  const isBankCreditTransfer = isBankCreditTransferPair(record, existing)
+  if (getRecordMemberId(record) !== getRecordMemberId(existing) && !isCrossMemberBankThirdParty && !isCreditThirdParty && !isBankCreditTransfer) return false
+
+  const source = normalizeSourceKey(record.source)
+  const sameAmountType = record.type === existing.type && Math.abs(Number(existing.amount) - Number(record.amount)) < 0.01
+  if (!sameAmountType) return false
+
+  if (
+    record.dedupeKey &&
+    existing.dedupeKey &&
+    (record.dedupeKey === existing.dedupeKey || hasMergedValue(existing.dedupeKey, record.dedupeKey))
+  ) return true
+
+  if (
+    source &&
+    sourcesOverlap(record.source, existing.source) &&
+    record.sourceTransactionId &&
+    existing.sourceTransactionId &&
+    (record.sourceTransactionId === existing.sourceTransactionId ||
+      hasMergedValue(existing.sourceTransactionId, record.sourceTransactionId))
+  ) {
+    return true
+  }
+
+  if (daysBetweenRecords(record, existing) > 1 && !(isBankCreditTransfer && isSameMonth(record, existing))) return false
+
+  if (isSalaryIncomePair(record, existing)) return true
+
+  if (isBankThirdPartyPair(record, existing)) return true
+
+  if (isCreditThirdParty) return true
+
+  if (isBankCreditTransfer) return true
+
+  if (
+    sourcesOverlap(record.source, existing.source) &&
+    record.date === existing.date &&
+    hasCompatibleDedupeText(record, existing)
+  ) return true
+
+  return false
+}
+
+const findDuplicateRecord = (record: RecordData, existingRecords: RecordData[]) => (
+  existingRecords.find(existing => isDuplicateRecord(record, existing))
+)
+
+const restoreDuplicateRecord = (record: RecordData, index: number) => {
+  const [restored] = duplicateRecords.value.splice(index, 1)
+  if (!restored) return
+
+  restored.forceImport = true
+  restored.duplicateMatch = record.duplicateMatch
+  restored.duplicateReason = record.duplicateReason
+  validRecords.value.push(restored)
+}
+
+const removeValidRecord = (index: number) => {
+  validRecords.value.splice(index, 1)
+
+  if (editingImportRemarkIndex.value === index) {
+    cancelImportRemarkEdit()
+  } else if (editingImportRemarkIndex.value !== null && editingImportRemarkIndex.value > index) {
+    editingImportRemarkIndex.value -= 1
+  }
+
+  if (editingCategoryIndex.value === index) {
+    editingCategoryIndex.value = null
+  } else if (editingCategoryIndex.value !== null && editingCategoryIndex.value > index) {
+    editingCategoryIndex.value -= 1
+  }
+}
+
+const applyBankOccurrenceKeys = (records: RecordData[]) => {
+  const counts = new Map<string, number>()
+  for (const record of records) {
+    const signature = [
+      record.date,
+      record.type,
+      Number(record.amount || 0).toFixed(2),
+      normalizeDedupeText(record.product || ''),
+      normalizeDedupeText(record.counterparty || '')
+    ].join('|')
+    const occurrence = (counts.get(signature) || 0) + 1
+    counts.set(signature, occurrence)
+    record.sourceTransactionId = `bank|${signature}|#${occurrence}`
+  }
+}
+
+const applyCreditOccurrenceKeys = (records: RecordData[]) => {
+  const counts = new Map<string, number>()
+  for (const record of records) {
+    const signature = [
+      record.date,
+      record.type,
+      Number(record.amount || 0).toFixed(2),
+      getDedupeDetailText(record)
+    ].join('|')
+    const occurrence = (counts.get(signature) || 0) + 1
+    counts.set(signature, occurrence)
+    record.sourceTransactionId = `credit|${signature}|#${occurrence}`
+  }
+}
 
 const startImportRemarkEdit = (record: RecordData, index: number) => {
   editingImportRemarkIndex.value = index
@@ -151,22 +473,6 @@ const parseBillDate = (value: unknown): string | null => {
   return dateObj.toISOString().split('T')[0]
 }
 
-// 判断是否为重复数据（基于文本特征简单判断，仅用作补充）
-const isTextDuplicate = (record: RecordData): boolean => {
-  const remark = record.remark || ''
-  const duplicateKeywords = [
-    '支付宝',
-    '财付通',
-    '网银在线',
-    '微信支付',
-    '快捷支付',
-    '扫码',
-    '美团订单'
-  ]
-
-  return duplicateKeywords.some(keyword => remark.includes(keyword))
-}
-
 // 从微信账单中提取昵称
 const extractWechatNickname = (rows: any[][]): string => {
   // 微信账单前几行通常包含用户信息
@@ -217,7 +523,9 @@ const classifyRecordsAsync = async (records: RecordData[]) => {
 
   let existingRecords: any[] = []
   try {
-    const memberIdParam = selectedMemberId.value === null ? 'family' : selectedMemberId.value
+    const memberIdParam = billType.value === 'bank' || billType.value === 'credit'
+      ? 'all'
+      : (selectedMemberId.value === null ? 'family' : selectedMemberId.value)
     const res = await authFetch(`/api/records/list?startDate=${minDateStr}&endDate=${maxDateStr}&memberId=${memberIdParam}`)
     if (res.ok) {
       const result = await res.json()
@@ -229,66 +537,27 @@ const classifyRecordsAsync = async (records: RecordData[]) => {
     console.error('获取历史记录进行核对失败:', e)
   }
 
-  // 2. 遍历比对数据
+  // 2. 只和历史库比对。当前文件内部不做宽松去重，避免误伤连续小额消费。
   for (const record of records) {
-    // a. 如果是传统银行/信用卡账单，先通过文本过滤明显的第三方渠道代扣
-    if (billType.value !== 'wechat' && billType.value !== 'alipay') {
-      if (isTextDuplicate(record)) {
-        duplicateRecords.value.push(record)
-        continue
-      }
+    if (!record.dedupeKey) {
+      record.dedupeKey = buildDedupeKey(record)
     }
+    record.forceImport = false
+    record.duplicateMatch = undefined
+    record.duplicateReason = undefined
 
-    // b. 数据库精准对比
-    let isDbDup = false
-    const rTime = new Date(record.date).getTime()
-    
-    for (const existing of existingRecords) {
-      // 收支类型相同，并且金额完全一致（允许0.01误差）
-      if (existing.type === record.type && Math.abs(existing.amount - record.amount) < 0.01) {
-        const eTime = new Date(existing.date).getTime()
-        const diffDays = Math.abs(rTime - eTime) / (1000 * 3600 * 24)
-        
-        // 要求日期在1天误差之内
-        if (diffDays <= 1) {
-           const isIntegerAmount = Number.isInteger(record.amount)
-           const remarkA = record.remark || ''
-           const remarkB = existing.remark || ''
-           
-           // 清理特殊字符和标点再比较
-           const cleanA = remarkA.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '')
-           const cleanB = remarkB.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '')
-           
-           let overlap = false
-           if (cleanA && cleanB) {
-              if (cleanA.length >= 2) {
-                 for(let i = 0; i < cleanA.length - 1; i++) {
-                    const bigram = cleanA.substring(i, i+2)
-                    if (cleanB.includes(bigram)) { overlap = true; break; }
-                 }
-              } else {
-                 if (cleanB.includes(cleanA)) overlap = true
-              }
-           }
+    const duplicateMatch = findDuplicateRecord(record, existingRecords)
+    const bankThirdPartyReviewReason = getBankThirdPartyReviewReason(record)
 
-           // 条件：如果是带着小数的高精度金额(如18.52)，金额一致+日期一致 即判定重复
-           // 如果是整数(如20.00)，为了防误判，要求至少部分备注文字重叠
-           if (overlap || !isIntegerAmount) {
-              isDbDup = true
-              break
-           }
-        }
-      }
-    }
-
-    if (isDbDup) {
+    if (duplicateMatch || bankThirdPartyReviewReason) {
+      record.duplicateMatch = duplicateMatch
+      record.duplicateReason = duplicateMatch ? '匹配到已有账单' : bankThirdPartyReviewReason
       duplicateRecords.value.push(record)
     } else {
       validRecords.value.push(record)
     }
   }
 }
-
 // 解析微信账单
 const parseWechatBill = (rows: any[][]): RecordData[] => {
   // Find header row (starts with "交易时间")
@@ -342,6 +611,10 @@ const parseWechatBill = (rows: any[][]): RecordData[] => {
         amount,
         date: formattedDate,
         remark,
+        counterparty: getCellText(counterparty),
+        product: getCellText(product),
+        payMethod: getCellText(row[6]),
+        sourceTransactionId: getCellText(row[8]),
         source: '微信'
       })
   }
@@ -452,7 +725,11 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
         category,
         amount,
         date: formattedDate,
-        remark: finalRemark
+        remark: finalRemark,
+        counterparty: name,
+        product: remark,
+        payMethod: '',
+        sourceTransactionId: ''
       })
     }
 
@@ -460,6 +737,7 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
   }
 
   const paymentTimeIndex = findColumn(['付款时间', '交易创建时间'])
+  const tradeNoIndex = findColumn(['交易号'])
   const counterpartyIndex = findColumn(['交易对方'])
   const productIndex = findColumn(['商品名称'])
   const amountIndex = findColumn(['金额(元)', '金额'])
@@ -515,7 +793,11 @@ const parseAlipayBill = (rows: any[][]): { records: RecordData[], accountName: s
           category,
           amount,
           date: formattedDate,
-          remark: finalRemark
+          remark: finalRemark,
+          counterparty,
+          product,
+          payMethod: '',
+          sourceTransactionId: tradeNoIndex === -1 ? '' : getCellText(row[tradeNoIndex])
       })
   }
 
@@ -570,7 +852,7 @@ const mapJDCategory = (type: '支出' | '收入', jdCategory: string, merchant: 
       '服饰内衣': '服饰',
       '美妆个护': '美妆护肤',
       '宠物生活': '宠物',
-      '医疗保健': '医疗',
+      '医疗保健': '保健',
       '手机通讯': '电子产品',
       '电脑办公': '电子产品',
       '运动户外': '娱乐',
@@ -674,7 +956,11 @@ const parseJDWalletBill = (rows: any[][]): RecordData[] => {
       category,
       amount,
       date: formattedDate,
-      remark
+      remark,
+      counterparty: merchant,
+      product: description,
+      payMethod: String(row[4] || '').trim(),
+      sourceTransactionId: String(row[8] || '').replace(/\t/g, '').trim()
     })
   }
 
@@ -767,12 +1053,6 @@ const parseBankBill = (rows: any[][]): RecordData[] => {
 
     if (income === 0 && expense === 0) continue
 
-    // 可选：过滤转账记录（自己账户之间的资金转移）
-    if (summary.includes('转账') || summary.includes('转出') ||
-        summary.includes('转入') || summary.includes('兑出')) {
-      continue
-    }
-
     const type: '支出' | '收入' = income > 0 ? '收入' : '支出'
     const amount = income > 0 ? income : expense
 
@@ -798,10 +1078,15 @@ const parseBankBill = (rows: any[][]): RecordData[] => {
       category,
       amount,
       date: formattedDate,
-      remark
+      remark,
+      counterparty: counterName,
+      product: summary,
+      payMethod: '',
+      sourceTransactionId: `${formattedDate}|${type}|${amount.toFixed(2)}|${summary}|${counterName}`
     })
   }
 
+  applyBankOccurrenceKeys(records)
   return records
 }
 
@@ -861,7 +1146,10 @@ const parseCreditBill = async (file: File): Promise<RecordData[]> => {
           category,
           amount,
           date,
-          remark
+          remark,
+          counterparty: item.counterparty || '',
+          product: item.product || remark,
+          payMethod: ''
         })
       }
     }
@@ -870,6 +1158,7 @@ const parseCreditBill = async (file: File): Promise<RecordData[]> => {
       throw new Error('未能从文本中提取到有效交易记录')
     }
 
+    applyCreditOccurrenceKeys(records)
     return records
 
   } catch (error: any) {
@@ -1003,6 +1292,8 @@ const handleFileChange = async (event: Event) => {
     const source = getCurrentSource()
     records.forEach(record => {
       record.source = source
+      record.memberId = selectedMemberId.value
+      record.dedupeKey = buildDedupeKey(record)
     })
 
     previewRecords.value = records
@@ -1031,6 +1322,8 @@ const handleFileChange = async (event: Event) => {
 }
 
 const confirmImport = async () => {
+    if (validRecords.value.length === 0) return
+
     // 如果未选择成员且未显示过确认对话框,显示确认对话框
     if (selectedMemberId.value === null && !showMemberConfirm.value) {
       showMemberConfirm.value = true
@@ -1042,8 +1335,8 @@ const confirmImport = async () => {
 
     isProcessing.value = true
     try {
-        // 只导入有效数据（validRecords），不导入重复数据
-        const dataToImport = validRecords.value
+        // 只提交“需导入”列表；用户恢复的重复项会带 forceImport 标记交给后端尊重。
+        const dataToImport = validRecords.value.map(({ duplicateMatch, ...record }) => record)
 
         const response = await authFetch('/api/records/batch', {
             method: 'POST',
@@ -1064,7 +1357,9 @@ const confirmImport = async () => {
               localStorage.setItem('lastSelectedMemberId', String(selectedMemberId.value))
             }
 
-            emit('success', `成功导入 ${result.count} 条记录`)
+            const updatedText = result.updatedDuplicates ? `，补充 ${result.updatedDuplicates} 条重复记录` : ''
+            const skippedText = result.skippedDuplicates ? `，跳过 ${result.skippedDuplicates} 条完全重复记录` : ''
+            emit('success', `成功导入 ${result.count} 条新记录${updatedText}${skippedText}`)
             emit('records-added')
             showPreview.value = false
             previewRecords.value = []
@@ -1302,7 +1597,7 @@ const cancelMemberConfirm = () => {
         </li>
         <li v-if="billType === 'bank'" class="flex items-start gap-2">
           <span class="text-amber-500 mt-0.5">•</span>
-          <span>支持中信银行等银行流水(CSV 格式),自动过滤转账类记录</span>
+          <span>支持中信银行等银行流水(CSV 格式),包含转账收入和支出</span>
         </li>
         <li v-if="billType === 'credit'" class="flex items-start gap-2">
           <span class="text-purple-500 mt-0.5">•</span>
@@ -1377,7 +1672,7 @@ const cancelMemberConfirm = () => {
         <!-- 统计信息 -->
         <div class="mb-4 px-4 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg b-solid b-1px b-emerald-200">
           <p class="text-sm font-semibold text-emerald-800">
-            共找到 {{ previewRecords.length }} 条记录，其中需导入 {{ validRecords.length }} 条，检测到与历史重复 {{ duplicateRecords.length }} 条
+            共找到 {{ previewRecords.length }} 条记录，其中预计新增 {{ validRecords.length }} 条，可能补充已有记录 {{ duplicateRecords.length }} 条
           </p>
         </div>
 
@@ -1395,6 +1690,7 @@ const cancelMemberConfirm = () => {
                   <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
                   <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
                   <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
+                  <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100">
@@ -1408,10 +1704,14 @@ const cancelMemberConfirm = () => {
                     </span>
                   </td>
                   <td class="px-4 py-3">
-                    <CustomSelect
-                      v-model="record.category"
-                      :options="CATEGORIES"
-                    />
+                    <button
+                      type="button"
+                      @click="openCategoryEditor(idx)"
+                      class="min-w-28 px-3 py-2 rounded-lg bg-white b-solid b-1px b-gray-200 text-gray-700 font-medium text-left hover:b-emerald-400 hover:bg-emerald-50 transition-all"
+                      title="点击修改分类"
+                    >
+                      {{ record.category }}
+                    </button>
                   </td>
                   <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
                     {{ record.amount.toFixed(2) }}
@@ -1434,9 +1734,21 @@ const cancelMemberConfirm = () => {
                       {{ record.remark || '-' }}
                     </span>
                   </td>
+                  <td class="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      @click="removeValidRecord(idx)"
+                      :disabled="isProcessing"
+                      class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white b-solid b-1px b-red-200 text-red-600 hover:bg-red-50 hover:b-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="从本次导入中删除"
+                      aria-label="从本次导入中删除"
+                    >
+                      <Trash2 :size="16" />
+                    </button>
+                  </td>
                 </tr>
                 <tr v-if="validRecords.length === 0">
-                  <td colspan="5" class="px-4 py-6 text-center text-gray-400">暂无需导入的数据</td>
+                  <td colspan="6" class="px-4 py-6 text-center text-gray-400">暂无需导入的数据</td>
                 </tr>
               </tbody>
             </table>
@@ -1446,38 +1758,62 @@ const cancelMemberConfirm = () => {
         <!-- 2. 重复数据 -->
         <div v-if="duplicateRecords.length > 0">
           <div class="mb-3 px-4 py-2 bg-orange-50 rounded-lg b-solid b-1px b-orange-200">
-            <h3 class="text-sm font-bold text-orange-800">2. 检测到的重复数据 ({{ duplicateRecords.length }} 条)</h3>
-            <p class="text-xs text-orange-600 mt-1">与系统历史记录或其他渠道比对存在重复风险，这些数据不会被导入</p>
+            <h3 class="text-sm font-bold text-orange-800">2. 可能重复的数据 ({{ duplicateRecords.length }} 条)</h3>
+            <p class="text-xs text-orange-600 mt-1">银行备注含支付宝/财付通会先放在这里；如果确认不是重复，可恢复到需导入列表</p>
           </div>
-          <div class="overflow-x-auto max-h-[300px] overflow-y-auto">
+          <div class="overflow-x-auto max-h-[420px] overflow-y-auto">
             <table class="w-full text-sm">
               <thead class="bg-gray-50 sticky top-0">
                 <tr>
-                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">日期</th>
-                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">类型</th>
-                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">分类</th>
-                  <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">金额</th>
-                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">备注</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">导入账单</th>
+                  <th class="px-4 py-3 text-left font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">匹配到的已有账单</th>
+                  <th class="px-4 py-3 text-right font-semibold text-gray-600 b-b-solid b-b-1px b-b-gray-200">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100">
-                <tr v-for="(record, idx) in duplicateRecords" :key="'dup-' + idx" class="hover:bg-gray-50 transition-colors opacity-60">
-                  <td class="px-4 py-3 text-gray-700">{{ record.date }}</td>
-                  <td class="px-4 py-3">
-                    <span
-                      :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                <tr v-for="(record, idx) in duplicateRecords" :key="'dup-' + idx" class="hover:bg-gray-50 transition-colors">
+                  <td class="px-4 py-3 align-top">
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2">
+                        <span
+                          :class="record.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                        >
+                          {{ record.type }}
+                        </span>
+                        <span class="font-mono font-semibold text-gray-800">{{ record.amount.toFixed(2) }}</span>
+                      </div>
+                      <div class="text-xs text-gray-500">{{ record.date }} · {{ record.category }}</div>
+                      <div class="max-w-sm text-gray-700 break-words">{{ record.remark || '-' }}</div>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 align-top">
+                    <div v-if="record.duplicateMatch" class="space-y-1 rounded-lg bg-orange-50 px-3 py-2 b-solid b-1px b-orange-100">
+                      <div class="flex items-center gap-2">
+                        <span
+                          :class="record.duplicateMatch.type === '收入' ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'"
+                        >
+                          {{ record.duplicateMatch.type }}
+                        </span>
+                        <span class="font-mono font-semibold text-gray-800">{{ Number(record.duplicateMatch.amount).toFixed(2) }}</span>
+                      </div>
+                      <div class="text-xs text-gray-500">
+                        {{ record.duplicateMatch.date }} · {{ record.duplicateMatch.category }} · {{ record.duplicateMatch.source || '已有记录' }}
+                      </div>
+                      <div class="max-w-sm text-gray-700 break-words">{{ record.duplicateMatch.remark || '-' }}</div>
+                    </div>
+                    <div v-else class="space-y-1 rounded-lg bg-gray-50 px-3 py-2 b-solid b-1px b-gray-200">
+                      <div class="text-sm font-medium text-gray-600">未匹配到已有账单</div>
+                      <div class="text-xs text-gray-500">{{ record.duplicateReason || '建议人工确认后再导入' }}</div>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 text-right align-top">
+                    <button
+                      type="button"
+                      @click="restoreDuplicateRecord(record, idx)"
+                      class="px-3 py-1.5 rounded-lg bg-white b-solid b-1px b-orange-300 text-orange-700 text-sm font-medium hover:bg-orange-50 transition-all"
                     >
-                      {{ record.type }}
-                    </span>
-                  </td>
-                  <td class="px-4 py-3 text-gray-600">
-                    {{ record.category }}
-                  </td>
-                  <td class="px-4 py-3 text-right font-mono font-semibold text-gray-800">
-                    {{ record.amount.toFixed(2) }}
-                  </td>
-                  <td class="px-4 py-3 text-gray-600 truncate max-w-xs" :title="record.remark">
-                    {{ record.remark }}
+                      恢复导入
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -1497,13 +1833,50 @@ const cancelMemberConfirm = () => {
           <button
             @click="confirmImport"
             class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg shadow-emerald-200 hover:shadow-xl hover:translate-y-[-1px] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            :disabled="isProcessing"
+            :disabled="isProcessing || validRecords.length === 0"
           >
             <Loader2 v-if="isProcessing" :size="18" class="animate-spin" />
             <span>确认导入 ({{ validRecords.length }} 条)</span>
           </button>
         </div>
       </template>
+    </Modal>
+
+    <Modal
+      :show="editingCategoryIndex !== null"
+      title="选择分类"
+      size="md"
+      @close="editingCategoryIndex = null"
+    >
+      <div v-if="editingCategoryRecord" class="space-y-5">
+        <div class="rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          <div class="flex flex-wrap gap-x-4 gap-y-1">
+            <span>{{ editingCategoryRecord.date }}</span>
+            <span>{{ editingCategoryRecord.type }}</span>
+            <span class="font-mono font-semibold text-gray-800">{{ editingCategoryRecord.amount.toFixed(2) }}</span>
+          </div>
+          <p class="mt-1 line-clamp-2">{{ editingCategoryRecord.remark || '-' }}</p>
+        </div>
+
+        <div>
+          <h4 class="mb-2 text-sm font-bold text-gray-700">{{ currentCategoryGroup.title }}</h4>
+          <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            <button
+              v-for="category in currentCategoryGroup.options"
+              :key="category"
+              type="button"
+              @click="selectPreviewCategory(category)"
+              class="h-10 px-3 rounded-lg b-solid b-1px text-sm font-medium transition-all flex items-center justify-center gap-1"
+              :class="editingCategoryRecord.category === category
+                ? 'bg-emerald-500 b-emerald-500 text-white shadow-sm'
+                : 'bg-white b-gray-200 text-gray-700 hover:b-emerald-400 hover:bg-emerald-50 hover:text-emerald-700'"
+            >
+              <Check v-if="editingCategoryRecord.category === category" :size="15" />
+              <span>{{ category }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </Modal>
 
     <!-- 成员确认对话框 -->

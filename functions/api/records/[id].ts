@@ -68,7 +68,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 const EXPENSE_CATEGORIES = [
     '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
     '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗', '保险',
-    '通讯', '服饰', '还贷', '家电/家具'
+    '保健', '通讯', '服饰', '还贷', '家电/家具', '工作待报销'
 ];
 
 const INCOME_CATEGORIES = [
@@ -76,6 +76,12 @@ const INCOME_CATEGORIES = [
 ];
 
 const CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
+
+function isCategoryAllowedForType(type: string, category: string): boolean {
+    if (type === '支出') return EXPENSE_CATEGORIES.includes(category);
+    if (type === '收入') return INCOME_CATEGORIES.includes(category);
+    return false;
+}
 
 // PUT /api/records/[id] - Update a record's editable fields
 export const onRequestPut: PagesFunction<Env> = async (context) => {
@@ -97,6 +103,14 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
             });
         }
 
+        const existingRecord = await DB.prepare('SELECT type FROM records WHERE id = ?').bind(id).first() as { type?: string } | null;
+        if (!existingRecord) {
+            return new Response(JSON.stringify({ error: '记录不存在' }), {
+                status: 404,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
         const body = await context.request.json() as { category?: string; remark?: string; source?: string };
         const updates: string[] = [];
         const values: any[] = [];
@@ -105,6 +119,14 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
             if (!body.category || !CATEGORIES.includes(body.category)) {
                 return new Response(JSON.stringify({
                     error: '无效的分类'
+                }), {
+                    status: 400,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+            if (!isCategoryAllowedForType(existingRecord.type || '', body.category)) {
+                return new Response(JSON.stringify({
+                    error: `分类"${body.category}"不能用于"${existingRecord.type}"记录`
                 }), {
                     status: 400,
                     headers: { ...corsHeaders, 'Content-Type': 'application/json' }

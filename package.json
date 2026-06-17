@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:api": "wrangler pages dev .wrangler-public --port 8787",
+    "dev:api": "wrangler pages dev dist --port 8787 --persist-to .wrangler/state",
     "build": "vite build",
     "type-check": "vue-tsc --noEmit",
     "preview": "vite preview",

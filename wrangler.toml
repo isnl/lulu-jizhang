@@ -9,7 +9,7 @@ database_id = "f1e397c4-7d21-4749-9cf8-9328dbd3f7c3"
 
 # Environment Variables
 [vars]
-DEEPSEEK_API_KEY = "sk-b4c8d41c1167486585824d2a8e741f8a"
+DEEPSEEK_API_KEY = "sk-5eac72a7e80d40cbad5bef5b6181ad80"
 JWT_SECRET = "my-jwt-secret@_0127"
 ADMIN_USERNAME = "admin_lll"
 ADMIN_PASSWORD = "admin@lll_159357"

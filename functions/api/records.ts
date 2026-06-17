@@ -15,6 +15,11 @@ interface RecordData {
     date: string;
     remark?: string;
     source?: string;
+    counterparty?: string;
+    product?: string;
+    payMethod?: string;
+    sourceTransactionId?: string;
+    dedupeKey?: string;
     memberId?: number | null;  // 关联成员ID
 }
 
@@ -24,7 +29,7 @@ const RECORD_TYPES = ['支出', '收入'];
 const EXPENSE_CATEGORIES = [
     '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
     '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗', '保险',
-    '通讯', '服饰', '还贷', '家电/家具'
+    '保健', '通讯', '服饰', '还贷', '家电/家具', '工作待报销'
 ];
 
 // 收入类别
@@ -34,6 +39,12 @@ const INCOME_CATEGORIES = [
 
 // 所有类别
 const CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
+
+function isCategoryAllowedForType(type: string, category: string): boolean {
+    if (type === '支出') return EXPENSE_CATEGORIES.includes(category);
+    if (type === '收入') return INCOME_CATEGORIES.includes(category);
+    return false;
+}
 
 const VALIDATION = {
     amount: {
@@ -60,7 +71,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
         const { DB } = context.env;
         const body = await context.request.json() as RecordData;
-        const { type, category, amount, date, remark = '', source = '', memberId = null } = body;
+        const {
+            type,
+            category,
+            amount,
+            date,
+            remark = '',
+            source = '',
+            counterparty = '',
+            product = '',
+            payMethod = '',
+            sourceTransactionId = '',
+            dedupeKey = '',
+            memberId = null
+        } = body;
 
         // Validation
         if (!type || !category || amount === undefined || !date) {
@@ -90,6 +114,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             });
         }
 
+        if (!isCategoryAllowedForType(type, category)) {
+            return new Response(JSON.stringify({
+                error: `分类"${category}"不能用于"${type}"记录`
+            }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
         const numAmount = parseFloat(amount.toString());
         if (isNaN(numAmount) || numAmount < VALIDATION.amount.min || numAmount > VALIDATION.amount.max) {
             return new Response(JSON.stringify({
@@ -112,8 +145,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
         // Insert record
         const result = await DB.prepare(
-            'INSERT INTO records (type, category, amount, date, remark, source, member_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).bind(type, category, numAmount, date, remark, source, memberId).run();
+            `INSERT INTO records (
+                type, category, amount, date, remark, source,
+                counterparty, product, pay_method, source_transaction_id, dedupe_key,
+                member_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+            type,
+            category,
+            numAmount,
+            date,
+            remark,
+            source,
+            counterparty,
+            product,
+            payMethod,
+            sourceTransactionId,
+            dedupeKey,
+            memberId
+        ).run();
 
         const record = {
             id: result.meta.last_row_id,
@@ -123,6 +173,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             date,
             remark,
             source,
+            counterparty,
+            product,
+            payMethod,
+            sourceTransactionId,
+            dedupeKey,
             memberId,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()

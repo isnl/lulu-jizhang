@@ -29,6 +29,14 @@ export interface RecordData {
     date: string
     remark?: string
     source?: string                  // 导入来源/记账来源
+    counterparty?: string
+    product?: string
+    payMethod?: string
+    sourceTransactionId?: string
+    dedupeKey?: string
+    forceImport?: boolean
+    duplicateMatch?: RecordData
+    duplicateReason?: string
     memberId?: number | null        // 关联成员ID
     memberName?: string             // 成员名称（用于显示）
     createdAt?: string
@@ -52,10 +60,12 @@ export interface DailyRecord extends Omit<RecordData, 'type'> {
     美妆护肤?: number
     医疗?: number
     保险?: number
+    保健?: number
     通讯?: number
     服饰?: number
     还贷?: number
     '家电/家具'?: number
+    工作待报销?: number
     工资?: number
     投资收入?: number
     稿费收入?: number
@@ -79,10 +89,12 @@ export interface MonthlyRecord extends Omit<RecordData, 'type'> {
     美妆护肤?: number
     医疗?: number
     保险?: number
+    保健?: number
     通讯?: number
     服饰?: number
     还贷?: number
     '家电/家具'?: number
+    工作待报销?: number
     工资?: number
     投资收入?: number
     稿费收入?: number
@@ -96,7 +108,7 @@ export const RECORD_TYPES = ['支出', '收入'] as const
 export const EXPENSE_CATEGORIES = [
     '生活费', '交通', '饮食', '日用品', '娱乐', '学习',
     '电子产品', '人情', '宠物', '饰品', '美妆护肤', '医疗', '保险',
-    '通讯', '服饰', '还贷', '家电/家具'
+    '保健', '通讯', '服饰', '还贷', '家电/家具', '工作待报销'
 ] as const
 
 // 收入类别
